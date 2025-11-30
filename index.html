@@ -1588,27 +1588,17 @@
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     // =============================================
-    // AUTHENTICATION SYSTEM
-    // =============================================
-    let currentUser = null;
-    let currentSession = null;
+// SIMPLE AUTHENTICATION SYSTEM
+// =============================================
+let currentUser = null;
+let currentSession = null;
 
-    // Password hashing function (simple implementation for demo)
-    async function hashPassword(password) {
-      // In a real application, use a proper hashing library
-      // This is a simplified version for demonstration
-      const encoder = new TextEncoder();
-      const data = encoder.encode(password + 'techpulse_salt');
-      const hash = await crypto.subtle.digest('SHA-256', data);
-      return Array.from(new Uint8Array(hash))
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
-    }
+// Simple session management
+function generateSessionToken() {
+    return 'session_' + Math.random().toString(36).substr(2) + Date.now().toString(36);
+}
 
-    // =============================================
-    // LOGIN/LOGOUT FUNCTIONS
-    // =============================================
-    async function login() {
+async function login() {
     const username = document.getElementById('usernameInput').value.trim();
     const password = document.getElementById('passwordInput').value.trim();
     
@@ -1622,68 +1612,37 @@
     loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Logging in...';
 
     try {
-        // SIMPLE FIX: Direct username/password check
+        // SIMPLE AUTHENTICATION - No database dependencies
         if (username === 'jadoon' && password === '37071') {
-            // Check if admin exists, create if not
-            const { data: existingUser, error } = await supabase
-                .from('users')
-                .select('*')
-                .eq('username', 'jadoon')
-                .single();
-
-            if (error || !existingUser) {
-                // Create main admin user
-                const { data: newUser, error: createError } = await supabase
-                    .from('users')
-                    .insert([
-                        {
-                            username: 'jadoon',
-                            password_hash: 'admin_default_hash', // Simple placeholder
-                            role: 'admin'
-                        }
-                    ])
-                    .select()
-                    .single();
-
-                if (createError) {
-                    console.error('Create admin error:', createError);
-                    showNotification('Error setting up admin account', 'error');
-                    return;
-                }
-
-                currentUser = newUser;
-            } else {
-                currentUser = existingUser;
-            }
-
-            await createUserSession(currentUser.id);
+            currentUser = {
+                id: 'admin-001',
+                username: 'jadoon',
+                role: 'admin',
+                is_active: true
+            };
+            
+            // Create session
+            const sessionToken = generateSessionToken();
+            const expiresAt = new Date();
+            expiresAt.setHours(expiresAt.getHours() + 24);
+            
+            currentSession = {
+                id: 'session-001',
+                user_id: currentUser.id,
+                session_token: sessionToken,
+                expires_at: expiresAt
+            };
+            
+            localStorage.setItem('session_token', sessionToken);
+            localStorage.setItem('user_data', JSON.stringify(currentUser));
+            
             showNotification('Login successful! Welcome back, ' + username, 'success');
             showLandingPage();
             return;
         }
-
-        // For other users, check in database
-        const { data: users, error } = await supabase
-            .from('users')
-            .select('*')
-            .eq('username', username)
-            .eq('is_active', true)
-            .single();
-
-        if (error || !users) {
-            showNotification('Invalid username or password', 'error');
-            return;
-        }
-
-        // Simple password check (for demo - in production use proper hashing)
-        if (password === 'demo123' || users.password_hash === await hashPassword(password)) {
-            currentUser = users;
-            await createUserSession(users.id);
-            showNotification('Login successful! Welcome back, ' + username, 'success');
-            showLandingPage();
-        } else {
-            showNotification('Invalid username or password', 'error');
-        }
+        
+        showNotification('Invalid username or password', 'error');
+        
     } catch (error) {
         console.error('Login error:', error);
         showNotification('Login failed: ' + error.message, 'error');
@@ -1693,269 +1652,190 @@
     }
 }
 
-    async function createUserSession(userId) {
-      try {
-        const sessionToken = generateSessionToken();
-        const expiresAt = new Date();
-        expiresAt.setHours(expiresAt.getHours() + 24); // 24 hour session
-
-        const { data, error } = await supabase
-          .from('user_sessions')
-          .insert([
-            {
-              user_id: userId,
-              session_token: sessionToken,
-              expires_at: expiresAt.toISOString()
-            }
-          ])
-          .select()
-          .single();
-
-        if (error) throw error;
-
-        currentSession = data;
-        localStorage.setItem('session_token', sessionToken);
+function checkExistingSession() {
+    const sessionToken = localStorage.getItem('session_token');
+    const userData = localStorage.getItem('user_data');
+    
+    if (!sessionToken || !userData) {
+        return false;
+    }
+    
+    try {
+        currentUser = JSON.parse(userData);
+        currentSession = {
+            session_token: sessionToken
+        };
         
-        // Update UI based on user role
-        updateUIForUserRole();
-      } catch (error) {
-        console.error('Session creation error:', error);
-      }
-    }
-
-    function generateSessionToken() {
-      return 'session_' + Math.random().toString(36).substr(2) + Date.now().toString(36);
-    }
-
-    async function checkExistingSession() {
-      const sessionToken = localStorage.getItem('session_token');
-      if (!sessionToken) return false;
-
-      try {
-        const { data: session, error } = await supabase
-          .from('user_sessions')
-          .select(`
-            *,
-            users (*)
-          `)
-          .eq('session_token', sessionToken)
-          .gt('expires_at', new Date().toISOString())
-          .single();
-
-        if (error || !session) {
-          localStorage.removeItem('session_token');
-          return false;
-        }
-
-        currentSession = session;
-        currentUser = session.users;
         updateUIForUserRole();
         showLandingPage();
         return true;
-      } catch (error) {
-        console.error('Session check error:', error);
+    } catch (error) {
+        console.error('Session restore error:', error);
         return false;
-      }
     }
+}
 
-    async function logout() {
-      if (currentSession) {
-        try {
-          await supabase
-            .from('user_sessions')
-            .delete()
-            .eq('id', currentSession.id);
-        } catch (error) {
-          console.error('Logout error:', error);
-        }
-      }
+function logout() {
+    currentUser = null;
+    currentSession = null;
+    localStorage.removeItem('session_token');
+    localStorage.removeItem('user_data');
+    
+    showLoginPage();
+    showNotification('Logged out successfully', 'success');
+}
 
-      currentUser = null;
-      currentSession = null;
-      localStorage.removeItem('session_token');
-      
-      showLoginPage();
-      showNotification('Logged out successfully', 'success');
-    }
-
-    function updateUIForUserRole() {
-      const adminPanelBtn = document.getElementById('adminPanelBtn');
-      const adminPanelBtn2 = document.getElementById('adminPanelBtn2');
-      
-      if (currentUser && currentUser.role === 'admin') {
+function updateUIForUserRole() {
+    const adminPanelBtn = document.getElementById('adminPanelBtn');
+    const adminPanelBtn2 = document.getElementById('adminPanelBtn2');
+    
+    if (currentUser && currentUser.role === 'admin') {
         if (adminPanelBtn) adminPanelBtn.style.display = 'inline-flex';
         if (adminPanelBtn2) adminPanelBtn2.style.display = 'inline-flex';
-      } else {
+    } else {
         if (adminPanelBtn) adminPanelBtn.style.display = 'none';
         if (adminPanelBtn2) adminPanelBtn2.style.display = 'none';
-      }
     }
+}
 
-    // =============================================
-    // USER MANAGEMENT FUNCTIONS
-    // =============================================
-    async function loadUsers() {
-      if (!currentUser || currentUser.role !== 'admin') {
+// =============================================
+// SIMPLE USER MANAGEMENT (In-Memory)
+// =============================================
+let users = [
+    {
+        id: 'admin-001',
+        username: 'jadoon',
+        role: 'admin',
+        is_active: true,
+        created_at: new Date().toISOString()
+    }
+];
+
+async function loadUsers() {
+    if (!currentUser || currentUser.role !== 'admin') {
         showNotification('Access denied: Admin privileges required', 'error');
         return;
-      }
-
-      try {
-        const { data: users, error } = await supabase
-          .from('users')
-          .select('*')
-          .order('created_at', { ascending: false });
-
-        if (error) throw error;
-
-        renderUsersList(users);
-        updateUserCounts(users);
-      } catch (error) {
-        console.error('Error loading users:', error);
-        showNotification('Error loading users', 'error');
-      }
     }
 
-    function renderUsersList(users) {
-      const usersList = document.getElementById('usersList');
-      if (!usersList) return;
+    renderUsersList(users);
+    updateUserCounts(users);
+}
 
-      if (!users || users.length === 0) {
+function renderUsersList(users) {
+    const usersList = document.getElementById('usersList');
+    if (!usersList) return;
+
+    if (!users || users.length === 0) {
         usersList.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-secondary);">No users found</div>';
         return;
-      }
+    }
 
-      let html = '';
-      users.forEach(user => {
+    let html = '';
+    users.forEach(user => {
         const isCurrentUser = currentUser && user.id === currentUser.id;
         const isMainAdmin = user.username === 'jadoon';
         
         html += `
-          <div class="user-card">
-            <div class="user-info">
-              <div class="user-name">
-                ${user.username}
-                ${isCurrentUser ? ' <span style="color: var(--primary);">(You)</span>' : ''}
-                ${isMainAdmin ? ' <span style="color: var(--warning);">(Main Admin)</span>' : ''}
-              </div>
-              <div class="user-role">
-                <span class="status-badge ${user.role === 'admin' ? 'status-active' : 'status-inactive'}">
-                  ${user.role}
-                </span>
-                • 
-                <span class="status-badge ${user.is_active ? 'status-active' : 'status-inactive'}">
-                  ${user.is_active ? 'Active' : 'Inactive'}
-                </span>
-                • Created: ${new Date(user.created_at).toLocaleDateString()}
-              </div>
+            <div class="user-card">
+                <div class="user-info">
+                    <div class="user-name">
+                        ${user.username}
+                        ${isCurrentUser ? ' <span style="color: var(--primary);">(You)</span>' : ''}
+                        ${isMainAdmin ? ' <span style="color: var(--warning);">(Main Admin)</span>' : ''}
+                    </div>
+                    <div class="user-role">
+                        <span class="status-badge ${user.role === 'admin' ? 'status-active' : 'status-inactive'}">
+                            ${user.role}
+                        </span>
+                        • 
+                        <span class="status-badge ${user.is_active ? 'status-active' : 'status-inactive'}">
+                            ${user.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                        • Created: ${new Date(user.created_at).toLocaleDateString()}
+                    </div>
+                </div>
+                <div class="user-actions">
+                    ${!isMainAdmin ? `
+                        <button class="btn btn-warning btn-sm" onclick="showEditUserModal('${user.id}')" ${isCurrentUser ? 'disabled' : ''}>
+                            <i class="fas fa-edit"></i> Edit
+                        </button>
+                    ` : `
+                        <button class="btn btn-secondary btn-sm" disabled>
+                            <i class="fas fa-lock"></i> Protected
+                        </button>
+                    `}
+                </div>
             </div>
-            <div class="user-actions">
-              ${!isMainAdmin ? `
-                <button class="btn btn-warning btn-sm" onclick="showEditUserModal('${user.id}')" ${isCurrentUser ? 'disabled' : ''}>
-                  <i class="fas fa-edit"></i> Edit
-                </button>
-              ` : `
-                <button class="btn btn-secondary btn-sm" disabled>
-                  <i class="fas fa-lock"></i> Protected
-                </button>
-              `}
-            </div>
-          </div>
         `;
-      });
+    });
 
-      usersList.innerHTML = html;
-    }
+    usersList.innerHTML = html;
+}
 
-    function updateUserCounts(users) {
-      document.getElementById('totalUsersCount').textContent = users.length;
-      document.getElementById('adminUsersCount').textContent = users.filter(u => u.role === 'admin').length;
-      
-      if (currentUser) {
+function updateUserCounts(users) {
+    document.getElementById('totalUsersCount').textContent = users.length;
+    document.getElementById('adminUsersCount').textContent = users.filter(u => u.role === 'admin').length;
+    
+    if (currentUser) {
         document.getElementById('currentUserInfo').textContent = `${currentUser.username} (${currentUser.role})`;
-      }
     }
+}
 
-    async function createUser() {
-      if (!currentUser || currentUser.role !== 'admin') {
+function createUser() {
+    if (!currentUser || currentUser.role !== 'admin') {
         showNotification('Access denied: Admin privileges required', 'error');
         return;
-      }
+    }
 
-      const username = document.getElementById('newUsername').value.trim();
-      const password = document.getElementById('newPassword').value.trim();
-      const role = document.getElementById('newRole').value;
+    const username = document.getElementById('newUsername').value.trim();
+    const password = document.getElementById('newPassword').value.trim();
+    const role = document.getElementById('newRole').value;
 
-      if (!username || !password) {
+    if (!username || !password) {
         showNotification('Please enter both username and password', 'error');
         return;
-      }
+    }
 
-      if (password.length < 4) {
+    if (password.length < 4) {
         showNotification('Password must be at least 4 characters long', 'error');
         return;
-      }
-
-      try {
-        const passwordHash = await hashPassword(password);
-        
-        const { data, error } = await supabase
-          .from('users')
-          .insert([
-            {
-              username: username,
-              password_hash: passwordHash,
-              role: role
-            }
-          ])
-          .select()
-          .single();
-
-        if (error) throw error;
-
-        // Clear form
-        document.getElementById('newUsername').value = '';
-        document.getElementById('newPassword').value = '';
-        
-        showNotification('User created successfully', 'success');
-        await loadUsers();
-      } catch (error) {
-        console.error('Error creating user:', error);
-        if (error.code === '23505') {
-          showNotification('Username already exists', 'error');
-        } else {
-          showNotification('Error creating user: ' + error.message, 'error');
-        }
-      }
     }
 
-    let editingUserId = null;
-
-    function showEditUserModal(userId) {
-      editingUserId = userId;
-      const editUserModal = document.getElementById('editUserModal');
-      editUserModal.style.display = 'block';
-
-      // Load user data
-      loadUserData(userId);
+    // Check if username already exists
+    if (users.find(u => u.username === username)) {
+        showNotification('Username already exists', 'error');
+        return;
     }
 
-    function hideEditUserModal() {
-      const editUserModal = document.getElementById('editUserModal');
-      editUserModal.style.display = 'none';
-      editingUserId = null;
-    }
+    // Create new user
+    const newUser = {
+        id: 'user-' + Date.now(),
+        username: username,
+        role: role,
+        is_active: true,
+        created_at: new Date().toISOString()
+    };
 
-    async function loadUserData(userId) {
-      try {
-        const { data: user, error } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', userId)
-          .single();
+    users.push(newUser);
 
-        if (error) throw error;
+    // Clear form
+    document.getElementById('newUsername').value = '';
+    document.getElementById('newPassword').value = '';
+    
+    showNotification('User created successfully', 'success');
+    loadUsers();
+}
 
+let editingUserId = null;
+
+function showEditUserModal(userId) {
+    editingUserId = userId;
+    const editUserModal = document.getElementById('editUserModal');
+    editUserModal.style.display = 'block';
+
+    // Load user data
+    const user = users.find(u => u.id === userId);
+    if (user) {
         document.getElementById('editUsername').value = user.username;
         document.getElementById('editRole').value = user.role;
         document.getElementById('editStatus').value = user.is_active.toString();
@@ -1964,132 +1844,91 @@
         // Hide delete button for current user
         const deleteBtn = document.getElementById('deleteUserBtn');
         if (deleteBtn) {
-          deleteBtn.style.display = currentUser && currentUser.id === userId ? 'none' : 'inline-flex';
+            deleteBtn.style.display = currentUser && currentUser.id === userId ? 'none' : 'inline-flex';
         }
-      } catch (error) {
-        console.error('Error loading user data:', error);
-        showNotification('Error loading user data', 'error');
-      }
     }
+}
 
-    async function updateUser() {
-      if (!editingUserId) return;
+function hideEditUserModal() {
+    const editUserModal = document.getElementById('editUserModal');
+    editUserModal.style.display = 'none';
+    editingUserId = null;
+}
 
-      const username = document.getElementById('editUsername').value.trim();
-      const password = document.getElementById('editPassword').value.trim();
-      const role = document.getElementById('editRole').value;
-      const is_active = document.getElementById('editStatus').value === 'true';
+function updateUser() {
+    if (!editingUserId) return;
 
-      if (!username) {
+    const username = document.getElementById('editUsername').value.trim();
+    const password = document.getElementById('editPassword').value.trim();
+    const role = document.getElementById('editRole').value;
+    const is_active = document.getElementById('editStatus').value === 'true';
+
+    if (!username) {
         showNotification('Please enter a username', 'error');
         return;
-      }
-
-      try {
-        const updateData = {
-          username: username,
-          role: role,
-          is_active: is_active
-        };
-
-        // Only update password if provided
-        if (password) {
-          if (password.length < 4) {
-            showNotification('Password must be at least 4 characters long', 'error');
-            return;
-          }
-          updateData.password_hash = await hashPassword(password);
-        }
-
-        const { error } = await supabase
-          .from('users')
-          .update(updateData)
-          .eq('id', editingUserId);
-
-        if (error) throw error;
-
-        showNotification('User updated successfully', 'success');
-        hideEditUserModal();
-        await loadUsers();
-      } catch (error) {
-        console.error('Error updating user:', error);
-        if (error.code === '23505') {
-          showNotification('Username already exists', 'error');
-        } else {
-          showNotification('Error updating user: ' + error.message, 'error');
-        }
-      }
     }
 
-    async function deleteUser() {
-      if (!editingUserId || !confirm('Are you sure you want to delete this user? This action cannot be undone.')) {
+    const userIndex = users.findIndex(u => u.id === editingUserId);
+    if (userIndex === -1) return;
+
+    // Check if username already exists (excluding current user)
+    if (users.find(u => u.username === username && u.id !== editingUserId)) {
+        showNotification('Username already exists', 'error');
         return;
-      }
-
-      try {
-        const { error } = await supabase
-          .from('users')
-          .delete()
-          .eq('id', editingUserId);
-
-        if (error) throw error;
-
-        showNotification('User deleted successfully', 'success');
-        hideEditUserModal();
-        await loadUsers();
-      } catch (error) {
-        console.error('Error deleting user:', error);
-        showNotification('Error deleting user: ' + error.message, 'error');
-      }
     }
 
-    // =============================================
-    // PAGE NAVIGATION FUNCTIONS
-    // =============================================
-    function showLoginPage() {
-      document.getElementById('login').style.display = 'flex';
-      document.getElementById('landing').style.display = 'none';
-      document.getElementById('adminPanel').style.display = 'none';
-      document.getElementById('dashboard').style.display = 'none';
-      
-      // Clear login form
-      document.getElementById('usernameInput').value = '';
-      document.getElementById('passwordInput').value = '';
+    // Update user
+    users[userIndex].username = username;
+    users[userIndex].role = role;
+    users[userIndex].is_active = is_active;
+
+    showNotification('User updated successfully', 'success');
+    hideEditUserModal();
+    loadUsers();
+}
+
+function deleteUser() {
+    if (!editingUserId || !confirm('Are you sure you want to delete this user? This action cannot be undone.')) {
+        return;
     }
 
-    function showLandingPage() {
-      if (!currentUser) {
+    const userIndex = users.findIndex(u => u.id === editingUserId);
+    if (userIndex === -1) return;
+
+    users.splice(userIndex, 1);
+
+    showNotification('User deleted successfully', 'success');
+    hideEditUserModal();
+    loadUsers();
+}
+
+// =============================================
+// UPDATE INITIALIZATION
+// =============================================
+function initializeApp() {
+    // Check for existing session first
+    if (!checkExistingSession()) {
         showLoginPage();
-        return;
-      }
-
-      document.getElementById('login').style.display = 'none';
-      document.getElementById('landing').style.display = 'flex';
-      document.getElementById('adminPanel').style.display = 'none';
-      document.getElementById('dashboard').style.display = 'none';
-      
-      clearAllSearchInputs();
-      clearPlayerHistory();
     }
-
-    function showAdminPanel() {
-      if (!currentUser || currentUser.role !== 'admin') {
-        showNotification('Access denied: Admin privileges required', 'error');
-        return;
-      }
-
-      document.getElementById('login').style.display = 'none';
-      document.getElementById('landing').style.display = 'none';
-      document.getElementById('adminPanel').style.display = 'block';
-      document.getElementById('dashboard').style.display = 'none';
-
-      loadUsers();
+    
+    const savedPage = sessionStorage.getItem('currentPage');
+    const savedView = sessionStorage.getItem('currentView');
+    
+    clearAllSearchInputs();
+    clearPlayerHistory();
+    
+    navigationContext = 'landing';
+    
+    if (savedPage) {
+        selectedPage = savedPage;
+        const pageObj = PAGES.find(p => p.name === savedPage);
+        if (pageObj) {
+            currentPageObj = pageObj;
+            navigationContext = 'dashboard';
+            loadDashboard(pageObj);
+        }
     }
-
-    function showAnalyticsDashboard() {
-      showLandingPage();
-    }
-
+}
     // =============================================
     // CONSTANTS AND CONFIGURATION (REST OF YOUR EXISTING CODE)
     // =============================================
