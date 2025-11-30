@@ -1698,27 +1698,43 @@
     }
 
     function formatTimeSince(lastDepositDate) {
-      if (!lastDepositDate) return 'N/A';
-      
-      const now = new Date();
-      const lastDeposit = new Date(lastDepositDate);
-      const diffMs = now - lastDeposit;
-      const hoursSince = Math.floor(diffMs / (1000 * 60 * 60));
-      const minutesSince = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-      const daysSince = hoursSince / 24;
-      const remainingHours = hoursSince % 24;
-      
-      if (daysSince < 1) {
-        if (hoursSince === 0) {
-          return `${minutesSince} minutes ago`;
-        } else {
-          return `${hoursSince} hours ${minutesSince} minutes ago`;
-        }
-      } else {
-        const fullDays = Math.floor(daysSince);
-        return `${fullDays} day${fullDays > 1 ? 's' : ''} ${remainingHours} hours ago`;
-      }
+  if (!lastDepositDate) return 'N/A';
+  
+  try {
+    const now = new Date();
+    const lastDeposit = new Date(lastDepositDate);
+    
+    // Check if date is valid
+    if (isNaN(lastDeposit.getTime())) {
+      return 'Invalid date';
     }
+    
+    const diffMs = now - lastDeposit;
+    
+    // Check if difference is valid
+    if (isNaN(diffMs) || diffMs < 0) {
+      return 'Time error';
+    }
+    
+    const hoursSince = Math.floor(diffMs / (1000 * 60 * 60));
+    const minutesSince = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+    const daysSince = Math.floor(hoursSince / 24);
+    const remainingHours = hoursSince % 24;
+    
+    if (daysSince < 1) {
+      if (hoursSince === 0) {
+        return `${minutesSince} minutes ago`;
+      } else {
+        return `${hoursSince} hours ${minutesSince} minutes ago`;
+      }
+    } else {
+      return `${daysSince} day${daysSince > 1 ? 's' : ''} ${remainingHours} hours ago`;
+    }
+  } catch (error) {
+    console.error('Error formatting time:', error);
+    return 'Time error';
+  }
+}
 
     function showNotification(message, type = 'success') {
       const notification = document.createElement('div');
@@ -1836,43 +1852,38 @@
     const depositData = await computePlayerDeposits(pageName);
     const playersWithNotes = await getAllPlayersWithNotes(pageName);
     
-    // Get status changes for this page to show in activity notes
-    const { data: changesData } = await supabase
-      .from('status_changes')
-      .select('*')
-      .eq('page_name', pageName)
-      .order('change_date', { ascending: false })
-      .limit(100);
-
-    // Create a map of recent status changes per player
-    const recentChanges = {};
-    if (changesData) {
-      changesData.forEach(change => {
-        const key = change.player_name;
-        if (!recentChanges[key]) {
-          recentChanges[key] = change;
-        }
-      });
-    }
-
     const resultPlayers = [];
     const recentActivePlayers = [];
     const recentInactivePlayers = [];
     
     statusData.forEach(player => {
       const playerName = player.player_name;
-      const lastDeposit = player.last_deposit_date ? new Date(player.last_deposit_date).toLocaleString() : "";
+      
+      // Fix date handling for Pakistani time
+      let lastDeposit = 'N/A';
+      try {
+        if (player.last_deposit_date) {
+          const date = new Date(player.last_deposit_date);
+          // Convert to Pakistani time (UTC+5)
+          date.setHours(date.getHours() + 5);
+          lastDeposit = date.toLocaleString('en-PK', {
+            timeZone: 'Asia/Karachi',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          });
+        }
+      } catch (e) {
+        lastDeposit = 'Date error';
+      }
+      
       const daysSince = player.days_since_last_deposit || 0;
       const status = player.status || "Inactive";
       
       const playerDeposits = depositData[playerName] || { total: 0, last7Days: 0 };
-      
-      // Enhanced activity notes with status change info
-      let activityNotes = player.activity_notes || "";
-      const recentChange = recentChanges[playerName];
-      if (recentChange) {
-        activityNotes += ` | Last status change: ${recentChange.old_status} → ${recentChange.new_status} on ${new Date(recentChange.change_date).toLocaleDateString()}`;
-      }
       
       const playerData = {
         player: playerName,
@@ -1881,9 +1892,10 @@
         status,
         totalDeposit: playerDeposits.total,
         last7DaysDeposit: playerDeposits.last7Days,
-        activityNotes: activityNotes,
+        activityNotes: player.activity_notes || "",
         hasNotes: playersWithNotes[playerName] || false,
-        timestamp: player.last_deposit_date ? new Date(player.last_deposit_date).getTime() : 0
+        timestamp: player.last_deposit_date ? new Date(player.last_deposit_date).getTime() : 0,
+        rawLastDepositDate: player.last_deposit_date // Keep original for calculations
       };
       
       resultPlayers.push(playerData);
@@ -1909,11 +1921,6 @@
     resultPlayers.sort((a, b) => b.timestamp - a.timestamp);
     recentActivePlayers.sort((a, b) => b.timestamp - a.timestamp);
     recentInactivePlayers.sort((a, b) => b.timestamp - a.timestamp);
-    highRiskPlayers.sort((a, b) => {
-      const timeA = new Date(a.lastDeposit).getTime();
-      const timeB = new Date(b.lastDeposit).getTime();
-      return timeB - timeA;
-    });
 
     const counts = {
       Total: resultPlayers.length,
