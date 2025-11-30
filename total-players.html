@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Total Players - Analytics</title>
+  <link rel="icon" type="image/png" href="https://cdn-icons-png.flaticon.com/512/8695/8695383.png">
+  <base target="_top">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+
+<body>
+  <!-- Dashboard -->
+  <div id="dashboard">
+    <header class="dashboard-header">
+      <div class="header-content">
+        <h1 class="page-title" id="pageTitle"></h1>
+        <div class="control-buttons">
+          <button id="changePageBtn" class="btn btn-secondary" onclick="backToLanding()">
+            <i class="fas fa-exchange-alt"></i> Change Page
+          </button>
+          <button id="refreshDataBtn" class="btn btn-success" onclick="showRefreshModal()">
+            <i class="fas fa-sync-alt"></i> Refresh Data
+          </button>
+          <button id="forceCleanupBtn" class="btn btn-warning" onclick="showCleanupModal()">
+            <i class="fas fa-broom"></i> Force Cleanup
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <div class="dashboard-content">
+      <div id="loader">
+        <div class="loading-screen">
+          <div class="spinner"></div>
+          <p>Loading total players data...</p>
+        </div>
+      </div>
+
+      <div id="backContainer"></div>
+      <div id="tableContainer"></div>
+    </div>
+  </div>
+
+  <!-- Refresh Modal -->
+  <div id="refreshModal" class="modal">
+    <div class="modal-content">
+      <h3 class="modal-title">Authorization Required</h3>
+      <p style="text-align: center; color: var(--text-secondary); margin-bottom: 1.5rem;">
+        Enter PIN to refresh data
+      </p>
+      <input type="password" id="refreshPinInput" class="modal-input" placeholder="****" maxlength="4">
+      <div class="modal-buttons">
+        <button class="btn btn-secondary" onclick="hideRefreshModal()">
+          <i class="fas fa-times"></i> Cancel
+        </button>
+        <button class="btn btn-success" onclick="confirmRefresh()">
+          <i class="fas fa-check"></i> Confirm
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cleanup Modal -->
+  <div id="cleanupModal" class="modal">
+    <div class="modal-content">
+      <h3 class="modal-title">Authorization Required</h3>
+      <p style="text-align: center; color: var(--text-secondary); margin-bottom: 1.5rem;">
+        Enter PIN to perform force cleanup
+      </p>
+      <input type="password" id="cleanupPinInput" class="modal-input" placeholder="****" maxlength="4">
+      <div class="modal-buttons">
+        <button class="btn btn-secondary" onclick="hideCleanupModal()">
+          <i class="fas fa-times"></i> Cancel
+        </button>
+        <button class="btn btn-warning" onclick="confirmForceCleanup()">
+          <i class="fas fa-check"></i> Confirm
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notes Modal -->
+  <div id="notesModal" class="modal">
+    <div class="modal-content">
+      <h3 class="modal-title" id="notesModalTitle">Add Note for Player</h3>
+      
+      <div>
+        <label style="display: block; margin-bottom: 0.5rem; color: var(--text-primary); font-weight: 500;">
+          New Note:
+        </label>
+        <textarea id="noteTextInput" class="modal-textarea" placeholder="Enter your note here..."></textarea>
+      </div>
+      
+      <div class="notes-history" id="notesHistoryContainer">
+        <div class="notes-history-title">Previous Notes</div>
+        <div id="notesList" class="no-notes">No notes yet for this player.</div>
+      </div>
+      
+      <div class="modal-buttons">
+        <button class="btn btn-secondary" onclick="hideNotesModal()">
+          <i class="fas fa-times"></i> Cancel
+        </button>
+        <button id="saveNoteBtn" class="btn btn-success" onclick="savePlayerNote()">
+          <i class="fas fa-save"></i> Save Note
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="assets/js/supabase-config.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/total-players.js"></script>
+</body>
+</html>
