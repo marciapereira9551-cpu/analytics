@@ -2586,7 +2586,7 @@
       }
     }
 
-    // FIXED: Page Daily Deposits function - properly handles 31-day months with explicit month days
+    // FIXED: Proper timezone handling for date generation
 async function getPageDailyDeposits(pageName, monthOffset = 0) {
   try {
     const { data, error } = await supabase
@@ -2722,9 +2722,9 @@ async function getPageDailyDeposits(pageName, monthOffset = 0) {
     
     console.log(`Month: ${currentMonth}, Year: ${year}, Month: ${month}, Days in month: ${daysInMonth}`);
     
-    // Create month start and end dates
-    const currentMonthStart = new Date(year, month - 1, 1); // Month is 0-indexed in JS Date
-    const currentMonthEnd = new Date(year, month - 1, daysInMonth);
+    // FIXED: Create dates in PKT timezone from the beginning
+    const currentMonthStart = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
+    const currentMonthEnd = new Date(Date.UTC(year, month - 1, daysInMonth, 23, 59, 59));
     
     // Use current PKT time
     const nowPKT = getCurrentPKT();
@@ -2733,14 +2733,13 @@ async function getPageDailyDeposits(pageName, monthOffset = 0) {
     // Only generate dates up to today for current month, or full month for past months
     const isCurrentMonth = currentMonth === formatDateForGrouping(nowPKT).substring(0, 7);
     
-    // FIXED: Use the actual end date properly
+    // FIXED: Use the actual end date properly in PKT
     let actualEndDate;
     if (isCurrentMonth) {
       actualEndDate = today;
     } else {
-      // For past months, use the last day of that month
-      actualEndDate = new Date(currentMonthEnd);
-      actualEndDate.setUTCHours(0, 0, 0, 0);
+      // For past months, use the last day of that month in PKT
+      actualEndDate = new Date(Date.UTC(year, month - 1, daysInMonth, 0, 0, 0));
     }
     
     // Create a map of all days in the month with deposits
@@ -2749,43 +2748,50 @@ async function getPageDailyDeposits(pageName, monthOffset = 0) {
       dailyDataMap[day.date] = day;
     });
     
-    // FIXED: Generate ALL days including the 31st for months that have it
+    // FIXED: Generate ALL days in PKT timezone
     const dailyDepositsArray = [];
+    
+    // Start from the first day of the month in PKT
     let currentDate = new Date(currentMonthStart);
-    currentDate.setUTCHours(0, 0, 0, 0);
     
     // DEBUG: Log the date range we're generating
     console.log(`Generating days for ${currentMonth}:`);
-    console.log(`Start: ${currentDate.toISOString()}`);
-    console.log(`End: ${actualEndDate.toISOString()}`);
+    console.log(`Start (UTC): ${currentDate.toISOString()}`);
+    console.log(`End (UTC): ${actualEndDate.toISOString()}`);
     console.log(`Days in month: ${daysInMonth}`);
     console.log(`Is current month: ${isCurrentMonth}`);
     
-    // FIXED: Use date comparison by timestamp to avoid timezone issues
-    const endTimestamp = actualEndDate.getTime();
-    
-    while (currentDate.getTime() <= endTimestamp) {
-      const dateKey = formatDateForGrouping(currentDate);
-      const displayDate = convertUTCToPKTDateOnly(currentDate.toISOString());
+    // FIXED: Generate dates using PKT-aware functions
+    for (let day = 1; day <= daysInMonth; day++) {
+      // Create date in UTC for the specific day in the month
+      const utcDate = new Date(Date.UTC(year, month - 1, day, 12, 0, 0)); // Use noon to avoid DST issues
       
-      if (dailyDataMap[dateKey]) {
-        // Day with deposits
-        dailyDepositsArray.push(dailyDataMap[dateKey]);
-      } else {
-        // Day without deposits
-        dailyDepositsArray.push({
-          date: dateKey,
-          displayDate: displayDate,
-          monthKey: currentMonth,
-          totalAmount: 0,
-          transactionCount: 0,
-          timestamp: currentDate.getTime()
-        });
+      // Convert to PKT date string for display
+      const pktDate = new Date(utcDate.getTime() + (5 * 60 * 60 * 1000));
+      const dateKey = formatDateForGrouping(pktDate);
+      const displayDate = convertUTCToPKTDateOnly(utcDate.toISOString());
+      
+      // Check if we should include this day (for current month, only include up to today)
+      const shouldInclude = isCurrentMonth ? 
+        pktDate <= nowPKT : 
+        true; // For past months, include all days
+      
+      if (shouldInclude) {
+        if (dailyDataMap[dateKey]) {
+          // Day with deposits
+          dailyDepositsArray.push(dailyDataMap[dateKey]);
+        } else {
+          // Day without deposits
+          dailyDepositsArray.push({
+            date: dateKey,
+            displayDate: displayDate,
+            monthKey: currentMonth,
+            totalAmount: 0,
+            transactionCount: 0,
+            timestamp: pktDate.getTime()
+          });
+        }
       }
-      
-      // Move to next day
-      currentDate.setDate(currentDate.getDate() + 1);
-      currentDate.setUTCHours(0, 0, 0, 0); // Reset time to start of day
     }
     
     console.log(`Generated ${dailyDepositsArray.length} days for ${currentMonth}`);
