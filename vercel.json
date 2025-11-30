@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "name": "player-analytics",
+  "name": "analytics",
   "builds": [
     {
       "src": "index.html",
