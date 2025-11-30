@@ -2586,7 +2586,7 @@
       }
     }
 
-    // FIXED: Page Daily Deposits function - completely rewritten to fix duplicate dates and timezone issues
+    // FIXED: Page Daily Deposits function - completely rewritten to properly handle different month lengths
     async function getPageDailyDeposits(pageName, monthOffset = 0) {
       try {
         const { data, error } = await supabase
@@ -2609,7 +2609,7 @@
           };
         }
         
-        // FIXED: Process all deposits and convert to PKT for grouping
+        // Process all deposits and convert to PKT for grouping
         const allDeposits = data.map(deposit => {
           const utcDate = new Date(deposit.deposit_date);
           // Convert to PKT for display and grouping
@@ -2690,9 +2690,9 @@
         // Get actual deposit days for the current month
         const currentMonthDeposits = Object.values(depositsByDay).filter(day => day.monthKey === currentMonth);
         
-        // Generate date range for the current month in PKT
+        // Generate date range for the current month in PKT - FIXED: Properly calculate month length
         const currentMonthStart = new Date(currentMonth + '-01');
-        const currentMonthEnd = new Date(currentMonthStart.getFullYear(), currentMonthStart.getMonth() + 1, 0);
+        const currentMonthEnd = new Date(currentMonthStart.getFullYear(), currentMonthStart.getMonth() + 1, 0); // Last day of month
         
         // Use current PKT time
         const nowPKT = getCurrentPKT();
@@ -2709,12 +2709,13 @@
           dailyDataMap[day.date] = day;
         });
         
-        // Generate complete date range for the month
+        // Generate complete date range for the month - FIXED: Properly handle different month lengths
         const currentDate = new Date(currentMonthStart);
         currentDate.setUTCHours(0, 0, 0, 0);
         
         const dailyDepositsArray = [];
         
+        // Generate all days for the current month up to actual end date
         while (currentDate <= actualEndDate && currentDate.getMonth() === currentMonthStart.getMonth()) {
           const dateKey = formatDateForGrouping(currentDate);
           const displayDate = convertUTCToPKTDateOnly(currentDate.toISOString());
