@@ -2374,7 +2374,7 @@
       }
     }
 
-    // FIXED: Enhanced Player History Function with proper date range handling
+    // FIXED: Enhanced Player History Function with proper PKT timezone handling
 async function getEnhancedPlayerHistory(playerName, pageName) {
   try {
     const { data, error } = await supabase
@@ -2397,14 +2397,18 @@ async function getEnhancedPlayerHistory(playerName, pageName) {
       };
     }
 
-    // Process ALL deposits regardless of date
+    // Process ALL deposits and convert to PKT for display
     const playerDeposits = data.map(deposit => {
       const utcDate = new Date(deposit.deposit_date);
+      
+      // Convert to PKT for display (UTC+5)
+      const pktDate = new Date(utcDate.getTime() + (5 * 60 * 60 * 1000));
       const displayDate = convertUTCToPKT(deposit.deposit_date);
       const displayDateOnly = convertUTCToPKTDateOnly(deposit.deposit_date);
       
       return {
         utcDate: utcDate,
+        pktDate: pktDate, // Store PKT date for calculations
         timestamp: displayDate,
         displayDateOnly: displayDateOnly,
         amount: parseFloat(deposit.amount) || 0,
@@ -2412,13 +2416,14 @@ async function getEnhancedPlayerHistory(playerName, pageName) {
       };
     }).filter(deposit => !isNaN(deposit.utcDate.getTime()));
 
-    playerDeposits.sort((a, b) => a.utcDate - b.utcDate);
+    playerDeposits.sort((a, b) => a.pktDate - b.pktDate); // Sort by PKT date
     
-    // Get current time in UTC for calculations
-    const nowUTC = new Date();
+    // Get current time in PKT for calculations
+    const nowPKT = getCurrentPKT();
     const mostRecentDeposit = playerDeposits[playerDeposits.length - 1];
     
-    const timeSinceMs = nowUTC - mostRecentDeposit.utcDate;
+    // Calculate time since using PKT dates
+    const timeSinceMs = nowPKT - mostRecentDeposit.pktDate;
     const hoursSince = Math.floor(timeSinceMs / (1000 * 60 * 60));
     const minutesSince = Math.floor((timeSinceMs % (1000 * 60 * 60)) / (1000 * 60));
     const daysSince = hoursSince / 24;
@@ -2448,7 +2453,8 @@ async function getEnhancedPlayerHistory(playerName, pageName) {
           count: 0,
           totalAmount: 0,
           displayDate: dateKey,
-          deposits: []
+          deposits: [],
+          pktDate: deposit.pktDate
         };
       }
       depositsByDay[dateKey].count++;
@@ -2458,7 +2464,9 @@ async function getEnhancedPlayerHistory(playerName, pageName) {
 
     // Create enhanced history
     const enhancedHistory = [];
-    const depositDates = Object.keys(depositsByDay).sort();
+    const depositDates = Object.keys(depositsByDay).sort((a, b) => {
+      return new Date(depositsByDay[a].pktDate) - new Date(depositsByDay[b].pktDate);
+    });
     
     if (depositDates.length === 0) {
       return {
@@ -2470,21 +2478,20 @@ async function getEnhancedPlayerHistory(playerName, pageName) {
       };
     }
 
-    // Get the earliest and latest deposit dates
-    const firstDepositDate = new Date(playerDeposits[0].utcDate);
-    const lastDepositDate = new Date(playerDeposits[playerDeposits.length - 1].utcDate);
+    // Get the earliest and latest deposit dates in PKT
+    const firstDepositDate = new Date(playerDeposits[0].pktDate);
+    const lastDepositDate = new Date(playerDeposits[playerDeposits.length - 1].pktDate);
     
-    // Create timeline from first deposit to today
+    // Create timeline from first deposit to today in PKT
     let currentDate = new Date(firstDepositDate);
     currentDate.setUTCHours(0, 0, 0, 0);
     
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
+    const todayPKT = getStartOfDayPKT(nowPKT);
     
     const timeline = [];
     
-    // Generate all days from first deposit to today
-    while (currentDate <= today) {
+    // Generate all days from first deposit to today in PKT
+    while (currentDate <= todayPKT) {
       const dateKey = convertUTCToPKTDateOnly(currentDate.toISOString());
       const dayData = depositsByDay[dateKey];
       
@@ -2495,12 +2502,21 @@ async function getEnhancedPlayerHistory(playerName, pageName) {
         depositCount: dayData ? dayData.count : 0,
         totalAmount: dayData ? dayData.totalAmount : 0,
         displayDate: dateKey,
-        deposits: dayData ? dayData.deposits : []
+        deposits: dayData ? dayData.deposits : [],
+        pktDate: currentDate.getTime()
       });
       
       currentDate.setDate(currentDate.getDate() + 1);
       currentDate.setUTCHours(0, 0, 0, 0);
     }
+
+    console.log(`Player ${playerName} timeline:`, {
+      firstDeposit: firstDepositDate.toISOString(),
+      lastDeposit: lastDepositDate.toISOString(),
+      todayPKT: todayPKT.toISOString(),
+      timelineDays: timeline.length,
+      depositsByDay: depositsByDay
+    });
 
     // Group consecutive days with same activity status
     let i = 0;
@@ -2525,7 +2541,8 @@ async function getEnhancedPlayerHistory(playerName, pageName) {
           activityLevel: currentDay.depositCount > 1 ? "Multiple" : "Single",
           depositCount: currentDay.depositCount,
           totalAmount: currentDay.totalAmount,
-          isDepositDay: true
+          isDepositDay: true,
+          timestamp: currentDay.pktDate
         });
         i++;
       } else {
@@ -2548,7 +2565,8 @@ async function getEnhancedPlayerHistory(playerName, pageName) {
             activityLevel: "None",
             depositCount: 0,
             totalAmount: 0,
-            isDepositDay: false
+            isDepositDay: false,
+            timestamp: timeline[inactiveStart].pktDate
           });
         } else {
           // Multiple consecutive inactive days
@@ -2562,7 +2580,8 @@ async function getEnhancedPlayerHistory(playerName, pageName) {
             activityLevel: "None",
             depositCount: 0,
             totalAmount: 0,
-            isDepositDay: false
+            isDepositDay: false,
+            timestamp: timeline[inactiveStart].pktDate
           });
         }
       }
