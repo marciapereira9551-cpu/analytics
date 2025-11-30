@@ -2,6 +2,7 @@
 <html>
 <head>
   <title>Tracking Software</title>
+  <link rel="icon" type="image/png" href="https://freepngimg.com/download/xbox/55641-7-gaming-picture-download-free-image.png">
   <base target="_top">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
@@ -2348,7 +2349,7 @@
       }
     }
 
-    // FIXED: Enhanced Player History Function
+    // FIXED: Enhanced Player History Function with proper timezone handling
     async function getEnhancedPlayerHistory(playerName, pageName) {
       try {
         const { data, error } = await supabase
@@ -2371,14 +2372,17 @@
           };
         }
 
+        // FIXED: Convert all dates to PKT for proper date grouping
         const playerDeposits = data.map(deposit => {
-          // Store original UTC date for calculations
           const originalDate = new Date(deposit.deposit_date);
-          const pktDate = convertUTCToPKT(deposit.deposit_date);
+          // Convert to PKT for date calculations
+          const pktOffset = 5 * 60 * 60 * 1000;
+          const pktDate = new Date(originalDate.getTime() + pktOffset);
+          const displayDate = convertUTCToPKT(deposit.deposit_date);
           
           return {
-            date: originalDate, // Use original for calculations
-            timestamp: pktDate, // Use PKT for display
+            date: pktDate, // Use PKT date for calculations
+            timestamp: displayDate, // Use PKT for display
             amount: parseFloat(deposit.amount) || 0,
             originalDate: deposit.deposit_date // Keep original UTC
           };
@@ -2412,11 +2416,12 @@
           timeSinceDisplay = `${fullDays} day${fullDays > 1 ? 's' : ''} ${remainingHours} hours ago`;
         }
 
-        // Group deposits by day
+        // FIXED: Group deposits by PKT date (not UTC)
         const depositsByDay = {};
         playerDeposits.forEach(deposit => {
+          // Use PKT date for grouping
           const dateKey = deposit.date.toISOString().split('T')[0];
-          const displayDate = convertUTCToPKTDateOnly(deposit.originalDate); // Use PKT format
+          const displayDate = convertUTCToPKTDateOnly(deposit.originalDate);
           
           if (!depositsByDay[dateKey]) {
             depositsByDay[dateKey] = {
@@ -2446,7 +2451,7 @@
           };
         }
 
-        // Create a timeline from first deposit to today
+        // Create a timeline from first deposit to today in PKT
         const firstDate = new Date(depositDates[0]);
         const lastDate = new Date(depositDates[depositDates.length - 1]);
         
@@ -2458,7 +2463,7 @@
         
         const timeline = [];
         
-        // Create timeline entries for each day from first deposit to today
+        // Create timeline entries for each day from first deposit to today in PKT
         while (currentDate <= todayStart) {
           const dateKey = currentDate.toISOString().split('T')[0];
           const dayData = depositsByDay[dateKey];
@@ -3839,7 +3844,7 @@
       }
     }
 
-    // FIXED: Enhanced Player History Rendering Function
+    // FIXED: Enhanced Player History Rendering Function with proper timezone handling
     function renderEnhancedPlayerHistory(data, playerName, pageName, isGlobal = false) {
       const container = isGlobal ? 
         document.getElementById('globalPlayerHistoryContainer') : 
