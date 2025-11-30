@@ -2658,7 +2658,7 @@ async function getPageDailyDeposits(pageName, monthOffset = 0) {
       depositsByDay[deposit.dateKey].transactionCount++;
     });
 
-    // Get unique months from actual deposit data in PKT
+    // Get all unique months from actual deposit data in PKT
     const allMonths = new Set();
     Object.values(depositsByDay).forEach(day => {
       allMonths.add(day.monthKey);
@@ -2690,7 +2690,7 @@ async function getPageDailyDeposits(pageName, monthOffset = 0) {
     // Get actual deposit days for the current month
     const currentMonthDeposits = Object.values(depositsByDay).filter(day => day.monthKey === currentMonth);
     
-    // FIXED: Properly get the last day of the month (handles 28, 29, 30, 31 days correctly)
+    // FIXED: Get current month start and end dates properly
     const currentMonthStart = new Date(currentMonth + '-01');
     const currentMonthEnd = new Date(currentMonthStart.getFullYear(), currentMonthStart.getMonth() + 1, 0); // Last day of month
     
