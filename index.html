@@ -2586,256 +2586,255 @@
       }
     }
 
-    // FIXED: Page Daily Deposits function - completely rewritten to properly handle different month lengths
-    async function getPageDailyDeposits(pageName, monthOffset = 0) {
-      try {
-        const { data, error } = await supabase
-          .from('deposits')
-          .select('deposit_date, amount, player_name')
-          .eq('page_name', pageName)
-          .order('deposit_date', { ascending: true });
-        
-        if (error) throw error;
-        
-        if (!data || data.length === 0) {
-          return {
-            success: false,
-            message: "No data found",
-            dailyDeposits: [],
-            totalAmount: 0,
-            totalTransactions: 0,
-            monthlyComparison: null,
-            availableMonths: []
-          };
-        }
-        
-        // Process all deposits and convert to PKT for grouping
-        const allDeposits = data.map(deposit => {
-          const utcDate = new Date(deposit.deposit_date);
-          // Convert to PKT for display and grouping
-          const pktDate = new Date(utcDate.getTime() + (5 * 60 * 60 * 1000));
-          const dateKey = formatDateForGrouping(pktDate);
-          const displayDate = convertUTCToPKTDateOnly(deposit.deposit_date);
-          const monthKey = pktDate.toISOString().substring(0, 7); // YYYY-MM format in PKT
-          
-          return {
-            utcDate: utcDate,
-            pktDate: pktDate,
-            dateKey: dateKey,
-            displayDate: displayDate,
-            monthKey: monthKey,
-            amount: parseFloat(deposit.amount) || 0,
-            player_name: deposit.player_name
-          };
-        }).filter(deposit => deposit.amount > 0);
+    // FIXED: Page Daily Deposits function - properly handles different month lengths
+async function getPageDailyDeposits(pageName, monthOffset = 0) {
+  try {
+    const { data, error } = await supabase
+      .from('deposits')
+      .select('deposit_date, amount, player_name')
+      .eq('page_name', pageName)
+      .order('deposit_date', { ascending: true });
+    
+    if (error) throw error;
+    
+    if (!data || data.length === 0) {
+      return {
+        success: false,
+        message: "No data found",
+        dailyDeposits: [],
+        totalAmount: 0,
+        totalTransactions: 0,
+        monthlyComparison: null,
+        availableMonths: []
+      };
+    }
+    
+    // Process all deposits and convert to PKT for grouping
+    const allDeposits = data.map(deposit => {
+      const utcDate = new Date(deposit.deposit_date);
+      // Convert to PKT for display and grouping
+      const pktDate = new Date(utcDate.getTime() + (5 * 60 * 60 * 1000));
+      const dateKey = formatDateForGrouping(pktDate);
+      const displayDate = convertUTCToPKTDateOnly(deposit.deposit_date);
+      const monthKey = pktDate.toISOString().substring(0, 7); // YYYY-MM format in PKT
+      
+      return {
+        utcDate: utcDate,
+        pktDate: pktDate,
+        dateKey: dateKey,
+        displayDate: displayDate,
+        monthKey: monthKey,
+        amount: parseFloat(deposit.amount) || 0,
+        player_name: deposit.player_name
+      };
+    }).filter(deposit => deposit.amount > 0);
 
-        if (allDeposits.length === 0) {
-          return {
-            success: false,
-            message: "No deposit data with positive amounts",
-            dailyDeposits: [],
-            totalAmount: 0,
-            totalTransactions: 0,
-            monthlyComparison: null,
-            availableMonths: []
-          };
-        }
+    if (allDeposits.length === 0) {
+      return {
+        success: false,
+        message: "No deposit data with positive amounts",
+        dailyDeposits: [],
+        totalAmount: 0,
+        totalTransactions: 0,
+        monthlyComparison: null,
+        availableMonths: []
+      };
+    }
 
-        // Group by PKT date
-        const depositsByDay = {};
-        allDeposits.forEach(deposit => {
-          if (!depositsByDay[deposit.dateKey]) {
-            depositsByDay[deposit.dateKey] = {
-              date: deposit.dateKey,
-              displayDate: deposit.displayDate,
-              monthKey: deposit.monthKey,
-              totalAmount: 0,
-              transactionCount: 0,
-              timestamp: deposit.pktDate.getTime()
-            };
-          }
-          depositsByDay[deposit.dateKey].totalAmount += deposit.amount;
-          depositsByDay[deposit.dateKey].transactionCount++;
-        });
-
-        // Get unique months from actual deposit data in PKT
-        const allMonths = new Set();
-        Object.values(depositsByDay).forEach(day => {
-          allMonths.add(day.monthKey);
-        });
-        
-        const sortedMonths = Array.from(allMonths).sort().reverse();
-        const availableMonths = sortedMonths.map((month, index) => ({
-          month: month,
-          display: new Date(month + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-          page: index + 1
-        }));
-        
-        if (sortedMonths.length === 0) {
-          return {
-            success: false,
-            message: "No deposit data available",
-            dailyDeposits: [],
-            totalAmount: 0,
-            totalTransactions: 0,
-            monthlyComparison: null,
-            availableMonths: []
-          };
-        }
-        
-        const currentMonthIndex = Math.min(monthOffset, sortedMonths.length - 1);
-        const currentMonth = sortedMonths[currentMonthIndex];
-        const previousMonth = currentMonthIndex + 1 < sortedMonths.length ? sortedMonths[currentMonthIndex + 1] : null;
-        
-        // Get actual deposit days for the current month
-        const currentMonthDeposits = Object.values(depositsByDay).filter(day => day.monthKey === currentMonth);
-        
-        // Generate date range for the current month in PKT - FIXED: Properly calculate month length
-        const currentMonthStart = new Date(currentMonth + '-01');
-        const currentMonthEnd = new Date(currentMonthStart.getFullYear(), currentMonthStart.getMonth() + 1, 0); // Last day of month
-        
-        // Use current PKT time
-        const nowPKT = getCurrentPKT();
-        const today = getStartOfDayPKT(nowPKT);
-        
-        // Only generate dates up to today for current month, or full month for past months
-        const actualEndDate = currentMonth === formatDateForGrouping(nowPKT).substring(0, 7) 
-          ? today 
-          : getStartOfDayPKT(currentMonthEnd);
-        
-        // Create a map of all days in the month with deposits
-        const dailyDataMap = {};
-        currentMonthDeposits.forEach(day => {
-          dailyDataMap[day.date] = day;
-        });
-        
-        // Generate complete date range for the month - FIXED: Properly handle different month lengths
-        const currentDate = new Date(currentMonthStart);
-        currentDate.setUTCHours(0, 0, 0, 0);
-        
-        const dailyDepositsArray = [];
-        
-        // Generate all days for the current month up to actual end date
-        while (currentDate <= actualEndDate && currentDate.getMonth() === currentMonthStart.getMonth()) {
-          const dateKey = formatDateForGrouping(currentDate);
-          const displayDate = convertUTCToPKTDateOnly(currentDate.toISOString());
-          
-          if (dailyDataMap[dateKey]) {
-            // Day with deposits
-            dailyDepositsArray.push(dailyDataMap[dateKey]);
-          } else {
-            // Day without deposits
-            dailyDepositsArray.push({
-              date: dateKey,
-              displayDate: displayDate,
-              monthKey: currentMonth,
-              totalAmount: 0,
-              transactionCount: 0,
-              timestamp: currentDate.getTime()
-            });
-          }
-          
-          currentDate.setDate(currentDate.getDate() + 1);
-        }
-        
-        // Sort by date descending (newest first)
-        dailyDepositsArray.sort((a, b) => b.timestamp - a.timestamp);
-        
-        // Calculate trends
-        const dailyDepositsWithTrends = dailyDepositsArray.map((day, index) => {
-          let trend = null;
-          
-          if (index < dailyDepositsArray.length - 1) {
-            const previousDay = dailyDepositsArray[index + 1];
-            
-            if (previousDay.totalAmount > 0 || day.totalAmount > 0) {
-              const difference = day.totalAmount - previousDay.totalAmount;
-              let percentage = 0;
-              
-              if (previousDay.totalAmount === 0 && day.totalAmount > 0) {
-                percentage = 100;
-              } else if (previousDay.totalAmount > 0) {
-                percentage = (difference / previousDay.totalAmount) * 100;
-              }
-              
-              trend = {
-                difference: difference,
-                percentage: percentage.toFixed(1),
-                direction: difference > 0 ? 'up' : difference < 0 ? 'down' : 'same'
-              };
-            }
-          }
-          
-          return {
-            ...day,
-            trend: trend
-          };
-        });
-        
-        const currentMonthTotal = dailyDepositsWithTrends.reduce((sum, day) => sum + day.totalAmount, 0);
-        const currentMonthTransactions = dailyDepositsWithTrends.reduce((sum, day) => sum + day.transactionCount, 0);
-        const totalDaysInPeriod = dailyDepositsWithTrends.length;
-        const dailyAverage = totalDaysInPeriod > 0 ? currentMonthTotal / totalDaysInPeriod : 0;
-        
-        let previousMonthTotal = 0;
-        let previousMonthTransactions = 0;
-        let monthlyComparison = null;
-        
-        if (previousMonth) {
-          // Calculate previous month total from actual deposits in that month
-          Object.values(depositsByDay).forEach(day => {
-            if (day.monthKey === previousMonth) {
-              previousMonthTotal += day.totalAmount;
-              previousMonthTransactions += day.transactionCount;
-            }
-          });
-          
-          const monthlyDifference = currentMonthTotal - previousMonthTotal;
-          let monthlyPercentage = 0;
-          
-          if (previousMonthTotal > 0) {
-            monthlyPercentage = (monthlyDifference / previousMonthTotal) * 100;
-          } else if (currentMonthTotal > 0) {
-            monthlyPercentage = 100;
-          }
-          
-          monthlyComparison = {
-            previousMonth: new Date(previousMonth + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-            previousMonthTotal: previousMonthTotal,
-            previousMonthTransactions: previousMonthTransactions,
-            difference: monthlyDifference,
-            percentage: monthlyPercentage.toFixed(1),
-            direction: monthlyDifference > 0 ? 'up' : monthlyDifference < 0 ? 'down' : 'same'
-          };
-        }
-        
-        return {
-          success: true,
-          dailyDeposits: dailyDepositsWithTrends,
-          totalAmount: currentMonthTotal,
-          totalTransactions: currentMonthTransactions,
-          dailyAverage: dailyAverage,
-          totalDaysInPeriod: totalDaysInPeriod,
-          monthlyComparison: monthlyComparison,
-          currentMonth: new Date(currentMonth + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-          availableMonths: availableMonths,
-          currentPage: currentMonthIndex + 1,
-          totalPages: sortedMonths.length,
-          message: `Showing ${totalDaysInPeriod} days for ${new Date(currentMonth + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`
-        };
-      } catch (error) {
-        console.error('Error getting page daily deposits:', error);
-        return {
-          success: false,
-          message: "Error loading daily deposits",
-          dailyDeposits: [],
+    // Group by PKT date
+    const depositsByDay = {};
+    allDeposits.forEach(deposit => {
+      if (!depositsByDay[deposit.dateKey]) {
+        depositsByDay[deposit.dateKey] = {
+          date: deposit.dateKey,
+          displayDate: deposit.displayDate,
+          monthKey: deposit.monthKey,
           totalAmount: 0,
-          totalTransactions: 0,
-          monthlyComparison: null,
-          availableMonths: []
+          transactionCount: 0,
+          timestamp: deposit.pktDate.getTime()
         };
       }
+      depositsByDay[deposit.dateKey].totalAmount += deposit.amount;
+      depositsByDay[deposit.dateKey].transactionCount++;
+    });
+
+    // Get unique months from actual deposit data in PKT
+    const allMonths = new Set();
+    Object.values(depositsByDay).forEach(day => {
+      allMonths.add(day.monthKey);
+    });
+    
+    const sortedMonths = Array.from(allMonths).sort().reverse();
+    const availableMonths = sortedMonths.map((month, index) => ({
+      month: month,
+      display: new Date(month + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+      page: index + 1
+    }));
+    
+    if (sortedMonths.length === 0) {
+      return {
+        success: false,
+        message: "No deposit data available",
+        dailyDeposits: [],
+        totalAmount: 0,
+        totalTransactions: 0,
+        monthlyComparison: null,
+        availableMonths: []
+      };
     }
+    
+    const currentMonthIndex = Math.min(monthOffset, sortedMonths.length - 1);
+    const currentMonth = sortedMonths[currentMonthIndex];
+    const previousMonth = currentMonthIndex + 1 < sortedMonths.length ? sortedMonths[currentMonthIndex + 1] : null;
+    
+    // Get actual deposit days for the current month
+    const currentMonthDeposits = Object.values(depositsByDay).filter(day => day.monthKey === currentMonth);
+    
+    // FIXED: Properly calculate month start and end dates
+    const currentMonthStart = new Date(currentMonth + '-01');
+    const currentMonthEnd = new Date(currentMonthStart.getFullYear(), currentMonthStart.getMonth() + 1, 0); // Last day of month
+    
+    // Use current PKT time
+    const nowPKT = getCurrentPKT();
+    const today = getStartOfDayPKT(nowPKT);
+    
+    // Only generate dates up to today for current month, or full month for past months
+    const actualEndDate = currentMonth === formatDateForGrouping(nowPKT).substring(0, 7) 
+      ? today 
+      : getStartOfDayPKT(currentMonthEnd);
+    
+    // Create a map of all days in the month with deposits
+    const dailyDataMap = {};
+    currentMonthDeposits.forEach(day => {
+      dailyDataMap[day.date] = day;
+    });
+    
+    // FIXED: Generate complete date range for the actual month (not just 30 days)
+    const dailyDepositsArray = [];
+    const currentDate = new Date(currentMonthStart);
+    currentDate.setUTCHours(0, 0, 0, 0);
+    
+    // Generate all days for the current month up to actual end date
+    while (currentDate <= actualEndDate && currentDate.getMonth() === currentMonthStart.getMonth()) {
+      const dateKey = formatDateForGrouping(currentDate);
+      const displayDate = convertUTCToPKTDateOnly(currentDate.toISOString());
+      
+      if (dailyDataMap[dateKey]) {
+        // Day with deposits
+        dailyDepositsArray.push(dailyDataMap[dateKey]);
+      } else {
+        // Day without deposits
+        dailyDepositsArray.push({
+          date: dateKey,
+          displayDate: displayDate,
+          monthKey: currentMonth,
+          totalAmount: 0,
+          transactionCount: 0,
+          timestamp: currentDate.getTime()
+        });
+      }
+      
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+    
+    // Sort by date descending (newest first)
+    dailyDepositsArray.sort((a, b) => b.timestamp - a.timestamp);
+    
+    // Calculate trends
+    const dailyDepositsWithTrends = dailyDepositsArray.map((day, index) => {
+      let trend = null;
+      
+      if (index < dailyDepositsArray.length - 1) {
+        const previousDay = dailyDepositsArray[index + 1];
+        
+        if (previousDay.totalAmount > 0 || day.totalAmount > 0) {
+          const difference = day.totalAmount - previousDay.totalAmount;
+          let percentage = 0;
+          
+          if (previousDay.totalAmount === 0 && day.totalAmount > 0) {
+            percentage = 100;
+          } else if (previousDay.totalAmount > 0) {
+            percentage = (difference / previousDay.totalAmount) * 100;
+          }
+          
+          trend = {
+            difference: difference,
+            percentage: percentage.toFixed(1),
+            direction: difference > 0 ? 'up' : difference < 0 ? 'down' : 'same'
+          };
+        }
+      }
+      
+      return {
+        ...day,
+        trend: trend
+      };
+    });
+    
+    const currentMonthTotal = dailyDepositsWithTrends.reduce((sum, day) => sum + day.totalAmount, 0);
+    const currentMonthTransactions = dailyDepositsWithTrends.reduce((sum, day) => sum + day.transactionCount, 0);
+    const totalDaysInPeriod = dailyDepositsWithTrends.length;
+    const dailyAverage = totalDaysInPeriod > 0 ? currentMonthTotal / totalDaysInPeriod : 0;
+    
+    let previousMonthTotal = 0;
+    let previousMonthTransactions = 0;
+    let monthlyComparison = null;
+    
+    if (previousMonth) {
+      // Calculate previous month total from actual deposits in that month
+      Object.values(depositsByDay).forEach(day => {
+        if (day.monthKey === previousMonth) {
+          previousMonthTotal += day.totalAmount;
+          previousMonthTransactions += day.transactionCount;
+        }
+      });
+      
+      const monthlyDifference = currentMonthTotal - previousMonthTotal;
+      let monthlyPercentage = 0;
+      
+      if (previousMonthTotal > 0) {
+        monthlyPercentage = (monthlyDifference / previousMonthTotal) * 100;
+      } else if (currentMonthTotal > 0) {
+        monthlyPercentage = 100;
+      }
+      
+      monthlyComparison = {
+        previousMonth: new Date(previousMonth + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+        previousMonthTotal: previousMonthTotal,
+        previousMonthTransactions: previousMonthTransactions,
+        difference: monthlyDifference,
+        percentage: monthlyPercentage.toFixed(1),
+        direction: monthlyDifference > 0 ? 'up' : monthlyDifference < 0 ? 'down' : 'same'
+      };
+    }
+    
+    return {
+      success: true,
+      dailyDeposits: dailyDepositsWithTrends,
+      totalAmount: currentMonthTotal,
+      totalTransactions: currentMonthTransactions,
+      dailyAverage: dailyAverage,
+      totalDaysInPeriod: totalDaysInPeriod,
+      monthlyComparison: monthlyComparison,
+      currentMonth: new Date(currentMonth + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+      availableMonths: availableMonths,
+      currentPage: currentMonthIndex + 1,
+      totalPages: sortedMonths.length,
+      message: `Showing ${totalDaysInPeriod} days for ${new Date(currentMonth + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`
+    };
+  } catch (error) {
+    console.error('Error getting page daily deposits:', error);
+    return {
+      success: false,
+      message: "Error loading daily deposits",
+      dailyDeposits: [],
+      totalAmount: 0,
+      totalTransactions: 0,
+      monthlyComparison: null,
+      availableMonths: []
+    };
+  }
+}
 
     // =============================================
     // UI FUNCTIONS
