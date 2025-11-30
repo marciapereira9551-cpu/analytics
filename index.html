@@ -2586,7 +2586,7 @@
       }
     }
 
-    // FIXED: Page Daily Deposits function - properly handles different month lengths
+    // FIXED: Page Daily Deposits function - completely rewritten date generation
 async function getPageDailyDeposits(pageName, monthOffset = 0) {
   try {
     const { data, error } = await supabase
@@ -2690,18 +2690,11 @@ async function getPageDailyDeposits(pageName, monthOffset = 0) {
     // Get actual deposit days for the current month
     const currentMonthDeposits = Object.values(depositsByDay).filter(day => day.monthKey === currentMonth);
     
-    // FIXED: Properly calculate month start and end dates
-    const currentMonthStart = new Date(currentMonth + '-01');
-    const currentMonthEnd = new Date(currentMonthStart.getFullYear(), currentMonthStart.getMonth() + 1, 0); // Last day of month
+    // FIXED: Create date range for the entire month - SIMPLE AND DIRECT APPROACH
+    const [year, month] = currentMonth.split('-').map(Number);
+    const daysInMonth = new Date(year, month, 0).getDate(); // Get actual days in month
     
-    // Use current PKT time
-    const nowPKT = getCurrentPKT();
-    const today = getStartOfDayPKT(nowPKT);
-    
-    // Only generate dates up to today for current month, or full month for past months
-    const actualEndDate = currentMonth === formatDateForGrouping(nowPKT).substring(0, 7) 
-      ? today 
-      : getStartOfDayPKT(currentMonthEnd);
+    console.log(`Generating ${daysInMonth} days for ${currentMonth} (Year: ${year}, Month: ${month})`);
     
     // Create a map of all days in the month with deposits
     const dailyDataMap = {};
@@ -2709,22 +2702,27 @@ async function getPageDailyDeposits(pageName, monthOffset = 0) {
       dailyDataMap[day.date] = day;
     });
     
-    // FIXED: Generate complete date range for the actual month - HARDCODED PROPER LOGIC
+    // FIXED: Generate ALL days for the month - no filtering by current date for past months
     const dailyDepositsArray = [];
     
-    // Get the actual number of days in the month
-    const year = currentMonthStart.getFullYear();
-    const month = currentMonthStart.getMonth();
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    // Check if this is the current month
+    const nowPKT = getCurrentPKT();
+    const currentMonthPKT = formatDateForGrouping(nowPKT).substring(0, 7);
+    const isCurrentMonth = currentMonth === currentMonthPKT;
     
-    console.log(`Generating ${daysInMonth} days for ${currentMonth}`); // Debug log
-    
-    // Generate all days for the current month
+    // Generate all days for the month
     for (let day = 1; day <= daysInMonth; day++) {
-      const currentDate = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
+      // Create date in UTC to avoid timezone issues
+      const currentDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
       
-      // Stop if we've reached today for current month
-      if (currentDate > actualEndDate) break;
+      // For current month, only show days up to today
+      if (isCurrentMonth) {
+        const todayPKT = getStartOfDayPKT(nowPKT);
+        const currentDayPKT = getStartOfDayPKT(currentDate);
+        if (currentDayPKT > todayPKT) {
+          continue; // Skip future dates in current month
+        }
+      }
       
       const dateKey = formatDateForGrouping(currentDate);
       const displayDate = convertUTCToPKTDateOnly(currentDate.toISOString());
@@ -2744,6 +2742,8 @@ async function getPageDailyDeposits(pageName, monthOffset = 0) {
         });
       }
     }
+    
+    console.log(`Generated ${dailyDepositsArray.length} days for display`);
     
     // Sort by date descending (newest first)
     dailyDepositsArray.sort((a, b) => b.timestamp - a.timestamp);
