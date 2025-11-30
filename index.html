@@ -4032,25 +4032,21 @@ async function confirmRefresh() {
   disableAllButtons();
   refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Refreshing...';
   showLoader();
-  showLoadingProgress();
   
   try {
-    // Call the Supabase function to refresh data
+    // Call the CORRECT Supabase function name
     const { data, error } = await supabase.rpc('refresh_player_status');
     
     if (error) throw error;
     
-    if (data.success) {
+    if (data && data.success) {
       showNotification(data.message, 'success');
-      
-      // Clear cache and reload dashboard data
-      clearPageCache();
       await loadDashboardData();
     } else {
-      showNotification('Refresh failed: ' + data.message, 'error');
+      showNotification('Refresh failed', 'error');
     }
   } catch (error) {
-    showNotification('Error refreshing data: ' + error.message, 'error');
+    showNotification('Error during refresh: ' + error.message, 'error');
   } finally {
     refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh Data';
     enableAllButtons();
@@ -4073,41 +4069,24 @@ async function confirmRefresh() {
   disableAllButtons();
   forceCleanupBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Cleaning...';
   showLoader();
-  showLoadingProgress();
   
   try {
-    // Call the Supabase function for force cleanup
+    // Call the CORRECT Supabase function name
     const { data, error } = await supabase.rpc('force_cleanup');
     
     if (error) throw error;
     
-    if (data.success) {
+    if (data && data.success) {
       showNotification(data.message, 'warning');
-      
-      // Clear cache and reload dashboard data
-      clearPageCache();
       await loadDashboardData();
     } else {
-      showNotification('Cleanup failed: ' + data.message, 'error');
+      showNotification('Cleanup failed', 'error');
     }
   } catch (error) {
     showNotification('Error during cleanup: ' + error.message, 'error');
   } finally {
     forceCleanupBtn.innerHTML = '<i class="fas fa-broom"></i> Force Cleanup';
     enableAllButtons();
-  }
-}
-
-// Updated cache clearing function
-function clearPageCache() {
-  // Since we're not using browser cache for Supabase data, 
-  // we'll clear any local storage or force reload data
-  sessionStorage.removeItem('currentPage');
-  sessionStorage.removeItem('currentView');
-  
-  // Force reload current data
-  if (selectedPage) {
-    loadDashboardData();
   }
 }
 
