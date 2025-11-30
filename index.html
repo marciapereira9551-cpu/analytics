@@ -1609,67 +1609,94 @@
     // LOGIN/LOGOUT FUNCTIONS
     // =============================================
     async function login() {
-      const username = document.getElementById('usernameInput').value.trim();
-      const password = document.getElementById('passwordInput').value.trim();
-      
-      if (!username || !password) {
+    const username = document.getElementById('usernameInput').value.trim();
+    const password = document.getElementById('passwordInput').value.trim();
+    
+    if (!username || !password) {
         showNotification('Please enter both username and password', 'error');
         return;
-      }
+    }
 
-      const loginBtn = document.getElementById('loginBtn');
-      loginBtn.disabled = true;
-      loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Logging in...';
+    const loginBtn = document.getElementById('loginBtn');
+    loginBtn.disabled = true;
+    loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Logging in...';
 
-      try {
-        // Hash the password
+    try {
+        // Special handling for main admin (jadoon/37071)
+        if (username === 'jadoon' && password === '37071') {
+            // Get the admin user from database
+            const { data: adminUser, error } = await supabase
+                .from('users')
+                .select('*')
+                .eq('username', 'jadoon')
+                .single();
+
+            if (error || !adminUser) {
+                // Create main admin if doesn't exist
+                const passwordHash = await hashPassword('37071');
+                const { data: newAdmin, error: createError } = await supabase
+                    .from('users')
+                    .insert([
+                        {
+                            username: 'jadoon',
+                            password_hash: passwordHash,
+                            role: 'admin'
+                        }
+                    ])
+                    .select()
+                    .single();
+
+                if (createError) {
+                    showNotification('Error creating admin account', 'error');
+                    return;
+                }
+
+                currentUser = newAdmin;
+                await createUserSession(newAdmin.id);
+                showNotification('Login successful! Welcome back, jadoon', 'success');
+                showLandingPage();
+            } else {
+                currentUser = adminUser;
+                await createUserSession(adminUser.id);
+                showNotification('Login successful! Welcome back, jadoon', 'success');
+                showLandingPage();
+            }
+            return;
+        }
+
+        // For other users, check credentials normally
         const passwordHash = await hashPassword(password);
         
-        // Check credentials against users table
         const { data: users, error } = await supabase
-          .from('users')
-          .select('*')
-          .eq('username', username)
-          .eq('is_active', true)
-          .single();
+            .from('users')
+            .select('*')
+            .eq('username', username)
+            .eq('is_active', true)
+            .single();
 
         if (error || !users) {
-          showNotification('Invalid username or password', 'error');
-          return;
+            showNotification('Invalid username or password', 'error');
+            return;
         }
 
-        // For demo purposes, we're using a simple hash comparison
-        // In production, use proper password verification
-        const { data: mainAdmin } = await supabase
-          .from('users')
-          .select('*')
-          .eq('username', 'jadoon')
-          .single();
-
-        // Special handling for main admin (password: 37071)
-        if (username === 'jadoon' && password === '37071') {
-          // Login successful for main admin
-          currentUser = users;
-          await createUserSession(users.id);
-          showNotification('Login successful! Welcome back, ' + username, 'success');
-          showLandingPage();
-        } else if (users.password_hash === passwordHash) {
-          // Login successful for other users
-          currentUser = users;
-          await createUserSession(users.id);
-          showNotification('Login successful! Welcome back, ' + username, 'success');
-          showLandingPage();
+        // Verify password by comparing hashes
+        const inputPasswordHash = await hashPassword(password);
+        if (users.password_hash === inputPasswordHash) {
+            currentUser = users;
+            await createUserSession(users.id);
+            showNotification('Login successful! Welcome back, ' + username, 'success');
+            showLandingPage();
         } else {
-          showNotification('Invalid username or password', 'error');
+            showNotification('Invalid username or password', 'error');
         }
-      } catch (error) {
+    } catch (error) {
         console.error('Login error:', error);
         showNotification('Login failed: ' + error.message, 'error');
-      } finally {
+    } finally {
         loginBtn.disabled = false;
         loginBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Login';
-      }
     }
+}
 
     async function createUserSession(userId) {
       try {
