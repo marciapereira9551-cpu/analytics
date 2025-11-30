@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <title>Tracking Software</title>
   <base target="_top">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
@@ -2347,6 +2348,7 @@
       }
     }
 
+    // FIXED: Enhanced Player History Function
     async function getEnhancedPlayerHistory(playerName, pageName) {
       try {
         const { data, error } = await supabase
@@ -2370,7 +2372,7 @@
         }
 
         const playerDeposits = data.map(deposit => {
-          // FIXED: Store original UTC for calculations, convert to PKT for display
+          // Store original UTC date for calculations
           const originalDate = new Date(deposit.deposit_date);
           const pktDate = convertUTCToPKT(deposit.deposit_date);
           
@@ -2384,7 +2386,7 @@
 
         playerDeposits.sort((a, b) => a.date - b.date);
         
-        // FIXED: Use current Pakistan time for calculations
+        // Get current time in Pakistan Time
         const now = new Date();
         const pktOffset = 5 * 60 * 60 * 1000;
         const nowPKT = new Date(now.getTime() + pktOffset);
@@ -2414,16 +2416,20 @@
         const depositsByDay = {};
         playerDeposits.forEach(deposit => {
           const dateKey = deposit.date.toISOString().split('T')[0];
+          const displayDate = convertUTCToPKTDateOnly(deposit.originalDate); // Use PKT format
+          
           if (!depositsByDay[dateKey]) {
             depositsByDay[dateKey] = {
               count: 0,
               totalAmount: 0,
               date: deposit.date,
-              displayDate: convertUTCToPKTDateOnly(deposit.originalDate) // Use PKT for display
+              displayDate: displayDate,
+              deposits: []
             };
           }
           depositsByDay[dateKey].count++;
           depositsByDay[dateKey].totalAmount += deposit.amount;
+          depositsByDay[dateKey].deposits.push(deposit);
         });
 
         // Create enhanced history
@@ -2440,6 +2446,7 @@
           };
         }
 
+        // Create a timeline from first deposit to today
         const firstDate = new Date(depositDates[0]);
         const lastDate = new Date(depositDates[depositDates.length - 1]);
         
@@ -2451,9 +2458,11 @@
         
         const timeline = [];
         
+        // Create timeline entries for each day from first deposit to today
         while (currentDate <= todayStart) {
           const dateKey = currentDate.toISOString().split('T')[0];
           const dayData = depositsByDay[dateKey];
+          const displayDate = convertUTCToPKTDateOnly(currentDate.toISOString());
           
           timeline.push({
             date: new Date(currentDate),
@@ -2461,18 +2470,20 @@
             isDepositDay: !!dayData,
             depositCount: dayData ? dayData.count : 0,
             totalAmount: dayData ? dayData.totalAmount : 0,
-            displayDate: convertUTCToPKTDateOnly(currentDate.toISOString()) // Use PKT for display
+            displayDate: displayDate,
+            deposits: dayData ? dayData.deposits : []
           });
           
           currentDate.setDate(currentDate.getDate() + 1);
         }
 
-        // Group consecutive inactive days
+        // Group consecutive days with same activity status
         let i = 0;
         while (i < timeline.length) {
           const currentDay = timeline[i];
           
           if (currentDay.isDepositDay) {
+            // This is a deposit day - create an entry for it
             const depositText = currentDay.depositCount === 1 
               ? "1 deposit" 
               : `${currentDay.depositCount} deposits`;
@@ -2482,16 +2493,18 @@
               : "";
             
             enhancedHistory.push({
-              dateRange: currentDay.displayDate, // Use PKT date
+              dateRange: currentDay.displayDate,
               activity: `${depositText}${amountText}`,
               status: "Active",
               inactiveGap: 0,
               activityLevel: currentDay.depositCount > 1 ? "Multiple" : "Single",
               depositCount: currentDay.depositCount,
-              totalAmount: currentDay.totalAmount
+              totalAmount: currentDay.totalAmount,
+              isDepositDay: true
             });
             i++;
           } else {
+            // This is an inactive day - find consecutive inactive days
             let inactiveStart = i;
             let inactiveCount = 0;
             
@@ -2501,16 +2514,19 @@
             }
             
             if (inactiveCount === 1) {
+              // Single inactive day
               enhancedHistory.push({
-                dateRange: timeline[inactiveStart].displayDate, // Use PKT date
+                dateRange: timeline[inactiveStart].displayDate,
                 activity: "No deposits",
                 status: "Inactive",
                 inactiveGap: inactiveCount,
                 activityLevel: "None",
                 depositCount: 0,
-                totalAmount: 0
+                totalAmount: 0,
+                isDepositDay: false
               });
             } else {
+              // Multiple consecutive inactive days
               const startDate = timeline[inactiveStart].displayDate;
               const endDate = timeline[i - 1].displayDate;
               enhancedHistory.push({
@@ -2520,7 +2536,8 @@
                 inactiveGap: inactiveCount,
                 activityLevel: "None",
                 depositCount: 0,
-                totalAmount: 0
+                totalAmount: 0,
+                isDepositDay: false
               });
             }
           }
@@ -3822,6 +3839,7 @@
       }
     }
 
+    // FIXED: Enhanced Player History Rendering Function
     function renderEnhancedPlayerHistory(data, playerName, pageName, isGlobal = false) {
       const container = isGlobal ? 
         document.getElementById('globalPlayerHistoryContainer') : 
