@@ -1698,43 +1698,27 @@
     }
 
     function formatTimeSince(lastDepositDate) {
-  if (!lastDepositDate) return 'N/A';
-  
-  try {
-    const now = new Date();
-    const lastDeposit = new Date(lastDepositDate);
-    
-    // Check if date is valid
-    if (isNaN(lastDeposit.getTime())) {
-      return 'Invalid date';
-    }
-    
-    const diffMs = now - lastDeposit;
-    
-    // Check if difference is valid
-    if (isNaN(diffMs) || diffMs < 0) {
-      return 'Time error';
-    }
-    
-    const hoursSince = Math.floor(diffMs / (1000 * 60 * 60));
-    const minutesSince = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-    const daysSince = Math.floor(hoursSince / 24);
-    const remainingHours = hoursSince % 24;
-    
-    if (daysSince < 1) {
-      if (hoursSince === 0) {
-        return `${minutesSince} minutes ago`;
+      if (!lastDepositDate) return 'N/A';
+      
+      const now = new Date();
+      const lastDeposit = new Date(lastDepositDate);
+      const diffMs = now - lastDeposit;
+      const hoursSince = Math.floor(diffMs / (1000 * 60 * 60));
+      const minutesSince = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+      const daysSince = hoursSince / 24;
+      const remainingHours = hoursSince % 24;
+      
+      if (daysSince < 1) {
+        if (hoursSince === 0) {
+          return `${minutesSince} minutes ago`;
+        } else {
+          return `${hoursSince} hours ${minutesSince} minutes ago`;
+        }
       } else {
-        return `${hoursSince} hours ${minutesSince} minutes ago`;
+        const fullDays = Math.floor(daysSince);
+        return `${fullDays} day${fullDays > 1 ? 's' : ''} ${remainingHours} hours ago`;
       }
-    } else {
-      return `${daysSince} day${daysSince > 1 ? 's' : ''} ${remainingHours} hours ago`;
     }
-  } catch (error) {
-    console.error('Error formatting time:', error);
-    return 'Time error';
-  }
-}
 
     function showNotification(message, type = 'success') {
       const notification = document.createElement('div');
@@ -1835,116 +1819,97 @@
     }
 
     async function getPageActivity(pageName) {
-  try {
-    // Get latest status for the page
-    const { data: statusData, error: statusError } = await supabase
-      .from('latest_status')
-      .select('*')
-      .eq('page_name', pageName);
-    
-    if (statusError) throw statusError;
-    
-    if (!statusData || statusData.length === 0) {
-      return getEmptyPageData(pageName);
-    }
-
-    // Get deposit data for calculations
-    const depositData = await computePlayerDeposits(pageName);
-    const playersWithNotes = await getAllPlayersWithNotes(pageName);
-    
-    const resultPlayers = [];
-    const recentActivePlayers = [];
-    const recentInactivePlayers = [];
-    
-    statusData.forEach(player => {
-      const playerName = player.player_name;
-      
-      // Fix date handling for Pakistani time
-      let lastDeposit = 'N/A';
       try {
-        if (player.last_deposit_date) {
-          const date = new Date(player.last_deposit_date);
-          // Convert to Pakistani time (UTC+5)
-          date.setHours(date.getHours() + 5);
-          lastDeposit = date.toLocaleString('en-PK', {
-            timeZone: 'Asia/Karachi',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-          });
+        const { data, error } = await supabase
+          .from('latest_status')
+          .select('*')
+          .eq('page_name', pageName);
+        
+        if (error) throw error;
+        
+        if (!data || data.length === 0) {
+          return getEmptyPageData(pageName);
         }
-      } catch (e) {
-        lastDeposit = 'Date error';
+
+        const depositData = await computePlayerDeposits(pageName);
+        const playersWithNotes = await getAllPlayersWithNotes(pageName);
+        
+        const resultPlayers = [];
+        const recentActivePlayers = [];
+        const recentInactivePlayers = [];
+        
+        data.forEach(player => {
+          const playerName = player.player_name;
+          const lastDeposit = player.last_deposit_date ? new Date(player.last_deposit_date).toLocaleString() : "";
+          const daysSince = player.days_since_last_deposit || 0;
+          const status = player.status || "Inactive";
+          
+          const playerDeposits = depositData[playerName] || { total: 0, last7Days: 0 };
+          
+          const playerData = {
+            player: playerName,
+            lastDeposit,
+            daysSince,
+            status,
+            totalDeposit: playerDeposits.total,
+            last7DaysDeposit: playerDeposits.last7Days,
+            activityNotes: player.activity_notes || "",
+            hasNotes: playersWithNotes[playerName] || false,
+            timestamp: player.last_deposit_date ? new Date(player.last_deposit_date).getTime() : 0
+          };
+          
+          resultPlayers.push(playerData);
+          
+          const recentActiveCheck = isRecentActiveOptimized(playerName, depositData);
+          if (status === "Active" && recentActiveCheck.isRecentActive) {
+            playerData.gapDays = recentActiveCheck.gapDays;
+            recentActivePlayers.push(playerData);
+          }
+          
+          if (status === "Inactive" && daysSince >= RECENT_INACTIVE_MIN_DAYS && daysSince < RECENT_INACTIVE_MAX_DAYS) {
+            recentInactivePlayers.push(playerData);
+          }
+        });
+
+        const highRiskData = await getHighRiskPlayers(pageName);
+        const highRiskPlayers = highRiskData.highRiskPlayers || [];
+
+        highRiskPlayers.forEach(player => {
+          player.hasNotes = playersWithNotes[player.player] || false;
+        });
+
+        resultPlayers.sort((a, b) => b.timestamp - a.timestamp);
+        recentActivePlayers.sort((a, b) => b.timestamp - a.timestamp);
+        recentInactivePlayers.sort((a, b) => b.timestamp - a.timestamp);
+        highRiskPlayers.sort((a, b) => {
+          const timeA = new Date(a.lastDeposit).getTime();
+          const timeB = new Date(b.lastDeposit).getTime();
+          return timeB - timeA;
+        });
+
+        const counts = {
+          Total: resultPlayers.length,
+          Active: resultPlayers.filter(p => p.status === "Active").length,
+          Inactive: resultPlayers.filter(p => p.status === "Inactive" && p.daysSince >= INACTIVE_THRESHOLD).length,
+          RecentActive: recentActivePlayers.length,
+          RecentInactive: recentInactivePlayers.length,
+          HighRisk: highRiskPlayers.length
+        };
+
+        return { 
+          page: pageName, 
+          counts, 
+          players: resultPlayers, 
+          recentActivePlayers, 
+          recentInactivePlayers,
+          highRiskPlayers: highRiskPlayers
+        };
+      } catch (error) {
+        console.error('Error getting page activity:', error);
+        showNotification('Error loading page data', 'error');
+        return getEmptyPageData(pageName);
       }
-      
-      const daysSince = player.days_since_last_deposit || 0;
-      const status = player.status || "Inactive";
-      
-      const playerDeposits = depositData[playerName] || { total: 0, last7Days: 0 };
-      
-      const playerData = {
-        player: playerName,
-        lastDeposit,
-        daysSince,
-        status,
-        totalDeposit: playerDeposits.total,
-        last7DaysDeposit: playerDeposits.last7Days,
-        activityNotes: player.activity_notes || "",
-        hasNotes: playersWithNotes[playerName] || false,
-        timestamp: player.last_deposit_date ? new Date(player.last_deposit_date).getTime() : 0,
-        rawLastDepositDate: player.last_deposit_date // Keep original for calculations
-      };
-      
-      resultPlayers.push(playerData);
-      
-      const recentActiveCheck = isRecentActiveOptimized(playerName, depositData);
-      if (status === "Active" && recentActiveCheck.isRecentActive) {
-        playerData.gapDays = recentActiveCheck.gapDays;
-        recentActivePlayers.push(playerData);
-      }
-      
-      if (status === "Inactive" && daysSince >= RECENT_INACTIVE_MIN_DAYS && daysSince < RECENT_INACTIVE_MAX_DAYS) {
-        recentInactivePlayers.push(playerData);
-      }
-    });
-
-    const highRiskData = await getHighRiskPlayers(pageName);
-    const highRiskPlayers = highRiskData.highRiskPlayers || [];
-
-    highRiskPlayers.forEach(player => {
-      player.hasNotes = playersWithNotes[player.player] || false;
-    });
-
-    resultPlayers.sort((a, b) => b.timestamp - a.timestamp);
-    recentActivePlayers.sort((a, b) => b.timestamp - a.timestamp);
-    recentInactivePlayers.sort((a, b) => b.timestamp - a.timestamp);
-
-    const counts = {
-      Total: resultPlayers.length,
-      Active: resultPlayers.filter(p => p.status === "Active").length,
-      Inactive: resultPlayers.filter(p => p.status === "Inactive" && p.daysSince >= INACTIVE_THRESHOLD).length,
-      RecentActive: recentActivePlayers.length,
-      RecentInactive: recentInactivePlayers.length,
-      HighRisk: highRiskPlayers.length
-    };
-
-    return { 
-      page: pageName, 
-      counts, 
-      players: resultPlayers, 
-      recentActivePlayers, 
-      recentInactivePlayers,
-      highRiskPlayers: highRiskPlayers
-    };
-  } catch (error) {
-    console.error('Error getting page activity:', error);
-    showNotification('Error loading page data', 'error');
-    return getEmptyPageData(pageName);
-  }
-}
+    }
 
     function getEmptyPageData(pageName) {
       return {
@@ -4022,80 +3987,65 @@
       cleanupPinInput.value = '';
     }
 
-    // Updated refresh function
-async function confirmRefresh() {
-  const pin = refreshPinInput.value.trim();
-  if (!pin) {
-    showNotification('Please enter PIN', 'error');
-    return;
-  }
-  
-  if (pin !== AUTH_PIN) {
-    showNotification('Invalid PIN', 'error');
-    return;
-  }
-  
-  hideRefreshModal();
-  disableAllButtons();
-  refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Refreshing...';
-  showLoader();
-  
-  try {
-    // Call the CORRECT Supabase function name
-    const { data, error } = await supabase.rpc('refresh_player_status');
-    
-    if (error) throw error;
-    
-    if (data && data.success) {
-      showNotification(data.message, 'success');
-      await loadDashboardData();
-    } else {
-      showNotification('Refresh failed', 'error');
+    async function confirmRefresh() {
+      const pin = refreshPinInput.value.trim();
+      if (!pin) {
+        showNotification('Please enter PIN', 'error');
+        return;
+      }
+      
+      if (pin !== AUTH_PIN) {
+        showNotification('Invalid PIN', 'error');
+        return;
+      }
+      
+      hideRefreshModal();
+      disableAllButtons();
+      refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Refreshing...';
+      showLoader();
+      showLoadingProgress();
+      
+      try {
+        showNotification('Data refresh initiated', 'success');
+        await loadDashboardData();
+        refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh Data';
+        enableAllButtons();
+      } catch (error) {
+        refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh Data';
+        enableAllButtons();
+        showNotification('Error refreshing data', 'error');
+      }
     }
-  } catch (error) {
-    showNotification('Error during refresh: ' + error.message, 'error');
-  } finally {
-    refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh Data';
-    enableAllButtons();
-  }
-}
 
     async function confirmForceCleanup() {
-  const pin = cleanupPinInput.value.trim();
-  if (!pin) {
-    showNotification('Please enter PIN', 'error');
-    return;
-  }
-  
-  if (pin !== AUTH_PIN) {
-    showNotification('Invalid PIN', 'error');
-    return;
-  }
-  
-  hideCleanupModal();
-  disableAllButtons();
-  forceCleanupBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Cleaning...';
-  showLoader();
-  
-  try {
-    // Call the CORRECT Supabase function name
-    const { data, error } = await supabase.rpc('force_cleanup');
-    
-    if (error) throw error;
-    
-    if (data && data.success) {
-      showNotification(data.message, 'warning');
-      await loadDashboardData();
-    } else {
-      showNotification('Cleanup failed', 'error');
+      const pin = cleanupPinInput.value.trim();
+      if (!pin) {
+        showNotification('Please enter PIN', 'error');
+        return;
+      }
+      
+      if (pin !== AUTH_PIN) {
+        showNotification('Invalid PIN', 'error');
+        return;
+      }
+      
+      hideCleanupModal();
+      disableAllButtons();
+      forceCleanupBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Cleaning...';
+      showLoader();
+      showLoadingProgress();
+      
+      try {
+        showNotification('Cleanup completed', 'warning');
+        await loadDashboardData();
+        forceCleanupBtn.innerHTML = '<i class="fas fa-broom"></i> Force Cleanup';
+        enableAllButtons();
+      } catch (error) {
+        forceCleanupBtn.innerHTML = '<i class="fas fa-broom"></i> Force Cleanup';
+        enableAllButtons();
+        showNotification('Error during cleanup', 'error');
+      }
     }
-  } catch (error) {
-    showNotification('Error during cleanup: ' + error.message, 'error');
-  } finally {
-    forceCleanupBtn.innerHTML = '<i class="fas fa-broom"></i> Force Cleanup';
-    enableAllButtons();
-  }
-}
 
     function disableAllButtons() {
       changePageBtn.disabled = true;
@@ -4152,40 +4102,6 @@ async function confirmRefresh() {
       const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
       document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
     }
-
-    // Fix for date handling in frontend
-function fixDateForDisplay(dateString) {
-  // Supabase returns UTC, but we need to display in local time
-  const date = new Date(dateString);
-  
-  // Add the timezone offset to display correctly
-  const timezoneOffset = date.getTimezoneOffset() * 60000;
-  return new Date(date.getTime() + timezoneOffset);
-}
-
-// Update your formatTimeSince function:
-function formatTimeSince(lastDepositDate) {
-  if (!lastDepositDate) return 'N/A';
-  
-  const now = new Date();
-  const lastDeposit = fixDateForDisplay(lastDepositDate); // Use fixed date
-  const diffMs = now - lastDeposit;
-  const hoursSince = Math.floor(diffMs / (1000 * 60 * 60));
-  const minutesSince = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-  const daysSince = hoursSince / 24;
-  const remainingHours = hoursSince % 24;
-  
-  if (daysSince < 1) {
-    if (hoursSince === 0) {
-      return `${minutesSince} minutes ago`;
-    } else {
-      return `${hoursSince} hours ${minutesSince} minutes ago`;
-    }
-  } else {
-    const fullDays = Math.floor(daysSince);
-    return `${fullDays} day${fullDays > 1 ? 's' : ''} ${remainingHours} hours ago`;
-  }
-}
 
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', detectTheme);
     detectTheme();
