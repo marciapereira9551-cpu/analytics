@@ -1819,97 +1819,125 @@
     }
 
     async function getPageActivity(pageName) {
-      try {
-        const { data, error } = await supabase
-          .from('latest_status')
-          .select('*')
-          .eq('page_name', pageName);
-        
-        if (error) throw error;
-        
-        if (!data || data.length === 0) {
-          return getEmptyPageData(pageName);
-        }
-
-        const depositData = await computePlayerDeposits(pageName);
-        const playersWithNotes = await getAllPlayersWithNotes(pageName);
-        
-        const resultPlayers = [];
-        const recentActivePlayers = [];
-        const recentInactivePlayers = [];
-        
-        data.forEach(player => {
-          const playerName = player.player_name;
-          const lastDeposit = player.last_deposit_date ? new Date(player.last_deposit_date).toLocaleString() : "";
-          const daysSince = player.days_since_last_deposit || 0;
-          const status = player.status || "Inactive";
-          
-          const playerDeposits = depositData[playerName] || { total: 0, last7Days: 0 };
-          
-          const playerData = {
-            player: playerName,
-            lastDeposit,
-            daysSince,
-            status,
-            totalDeposit: playerDeposits.total,
-            last7DaysDeposit: playerDeposits.last7Days,
-            activityNotes: player.activity_notes || "",
-            hasNotes: playersWithNotes[playerName] || false,
-            timestamp: player.last_deposit_date ? new Date(player.last_deposit_date).getTime() : 0
-          };
-          
-          resultPlayers.push(playerData);
-          
-          const recentActiveCheck = isRecentActiveOptimized(playerName, depositData);
-          if (status === "Active" && recentActiveCheck.isRecentActive) {
-            playerData.gapDays = recentActiveCheck.gapDays;
-            recentActivePlayers.push(playerData);
-          }
-          
-          if (status === "Inactive" && daysSince >= RECENT_INACTIVE_MIN_DAYS && daysSince < RECENT_INACTIVE_MAX_DAYS) {
-            recentInactivePlayers.push(playerData);
-          }
-        });
-
-        const highRiskData = await getHighRiskPlayers(pageName);
-        const highRiskPlayers = highRiskData.highRiskPlayers || [];
-
-        highRiskPlayers.forEach(player => {
-          player.hasNotes = playersWithNotes[player.player] || false;
-        });
-
-        resultPlayers.sort((a, b) => b.timestamp - a.timestamp);
-        recentActivePlayers.sort((a, b) => b.timestamp - a.timestamp);
-        recentInactivePlayers.sort((a, b) => b.timestamp - a.timestamp);
-        highRiskPlayers.sort((a, b) => {
-          const timeA = new Date(a.lastDeposit).getTime();
-          const timeB = new Date(b.lastDeposit).getTime();
-          return timeB - timeA;
-        });
-
-        const counts = {
-          Total: resultPlayers.length,
-          Active: resultPlayers.filter(p => p.status === "Active").length,
-          Inactive: resultPlayers.filter(p => p.status === "Inactive" && p.daysSince >= INACTIVE_THRESHOLD).length,
-          RecentActive: recentActivePlayers.length,
-          RecentInactive: recentInactivePlayers.length,
-          HighRisk: highRiskPlayers.length
-        };
-
-        return { 
-          page: pageName, 
-          counts, 
-          players: resultPlayers, 
-          recentActivePlayers, 
-          recentInactivePlayers,
-          highRiskPlayers: highRiskPlayers
-        };
-      } catch (error) {
-        console.error('Error getting page activity:', error);
-        showNotification('Error loading page data', 'error');
-        return getEmptyPageData(pageName);
-      }
+  try {
+    // Get latest status for the page
+    const { data: statusData, error: statusError } = await supabase
+      .from('latest_status')
+      .select('*')
+      .eq('page_name', pageName);
+    
+    if (statusError) throw statusError;
+    
+    if (!statusData || statusData.length === 0) {
+      return getEmptyPageData(pageName);
     }
+
+    // Get deposit data for calculations
+    const depositData = await computePlayerDeposits(pageName);
+    const playersWithNotes = await getAllPlayersWithNotes(pageName);
+    
+    // Get status changes for this page to show in activity notes
+    const { data: changesData } = await supabase
+      .from('status_changes')
+      .select('*')
+      .eq('page_name', pageName)
+      .order('change_date', { ascending: false })
+      .limit(100);
+
+    // Create a map of recent status changes per player
+    const recentChanges = {};
+    if (changesData) {
+      changesData.forEach(change => {
+        const key = change.player_name;
+        if (!recentChanges[key]) {
+          recentChanges[key] = change;
+        }
+      });
+    }
+
+    const resultPlayers = [];
+    const recentActivePlayers = [];
+    const recentInactivePlayers = [];
+    
+    statusData.forEach(player => {
+      const playerName = player.player_name;
+      const lastDeposit = player.last_deposit_date ? new Date(player.last_deposit_date).toLocaleString() : "";
+      const daysSince = player.days_since_last_deposit || 0;
+      const status = player.status || "Inactive";
+      
+      const playerDeposits = depositData[playerName] || { total: 0, last7Days: 0 };
+      
+      // Enhanced activity notes with status change info
+      let activityNotes = player.activity_notes || "";
+      const recentChange = recentChanges[playerName];
+      if (recentChange) {
+        activityNotes += ` | Last status change: ${recentChange.old_status} → ${recentChange.new_status} on ${new Date(recentChange.change_date).toLocaleDateString()}`;
+      }
+      
+      const playerData = {
+        player: playerName,
+        lastDeposit,
+        daysSince,
+        status,
+        totalDeposit: playerDeposits.total,
+        last7DaysDeposit: playerDeposits.last7Days,
+        activityNotes: activityNotes,
+        hasNotes: playersWithNotes[playerName] || false,
+        timestamp: player.last_deposit_date ? new Date(player.last_deposit_date).getTime() : 0
+      };
+      
+      resultPlayers.push(playerData);
+      
+      const recentActiveCheck = isRecentActiveOptimized(playerName, depositData);
+      if (status === "Active" && recentActiveCheck.isRecentActive) {
+        playerData.gapDays = recentActiveCheck.gapDays;
+        recentActivePlayers.push(playerData);
+      }
+      
+      if (status === "Inactive" && daysSince >= RECENT_INACTIVE_MIN_DAYS && daysSince < RECENT_INACTIVE_MAX_DAYS) {
+        recentInactivePlayers.push(playerData);
+      }
+    });
+
+    const highRiskData = await getHighRiskPlayers(pageName);
+    const highRiskPlayers = highRiskData.highRiskPlayers || [];
+
+    highRiskPlayers.forEach(player => {
+      player.hasNotes = playersWithNotes[player.player] || false;
+    });
+
+    resultPlayers.sort((a, b) => b.timestamp - a.timestamp);
+    recentActivePlayers.sort((a, b) => b.timestamp - a.timestamp);
+    recentInactivePlayers.sort((a, b) => b.timestamp - a.timestamp);
+    highRiskPlayers.sort((a, b) => {
+      const timeA = new Date(a.lastDeposit).getTime();
+      const timeB = new Date(b.lastDeposit).getTime();
+      return timeB - timeA;
+    });
+
+    const counts = {
+      Total: resultPlayers.length,
+      Active: resultPlayers.filter(p => p.status === "Active").length,
+      Inactive: resultPlayers.filter(p => p.status === "Inactive" && p.daysSince >= INACTIVE_THRESHOLD).length,
+      RecentActive: recentActivePlayers.length,
+      RecentInactive: recentInactivePlayers.length,
+      HighRisk: highRiskPlayers.length
+    };
+
+    return { 
+      page: pageName, 
+      counts, 
+      players: resultPlayers, 
+      recentActivePlayers, 
+      recentInactivePlayers,
+      highRiskPlayers: highRiskPlayers
+    };
+  } catch (error) {
+    console.error('Error getting page activity:', error);
+    showNotification('Error loading page data', 'error');
+    return getEmptyPageData(pageName);
+  }
+}
 
     function getEmptyPageData(pageName) {
       return {
@@ -3987,65 +4015,101 @@
       cleanupPinInput.value = '';
     }
 
-    async function confirmRefresh() {
-      const pin = refreshPinInput.value.trim();
-      if (!pin) {
-        showNotification('Please enter PIN', 'error');
-        return;
-      }
+    // Updated refresh function
+async function confirmRefresh() {
+  const pin = refreshPinInput.value.trim();
+  if (!pin) {
+    showNotification('Please enter PIN', 'error');
+    return;
+  }
+  
+  if (pin !== AUTH_PIN) {
+    showNotification('Invalid PIN', 'error');
+    return;
+  }
+  
+  hideRefreshModal();
+  disableAllButtons();
+  refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Refreshing...';
+  showLoader();
+  showLoadingProgress();
+  
+  try {
+    // Call the Supabase function to refresh data
+    const { data, error } = await supabase.rpc('refresh_player_status');
+    
+    if (error) throw error;
+    
+    if (data.success) {
+      showNotification(data.message, 'success');
       
-      if (pin !== AUTH_PIN) {
-        showNotification('Invalid PIN', 'error');
-        return;
-      }
-      
-      hideRefreshModal();
-      disableAllButtons();
-      refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Refreshing...';
-      showLoader();
-      showLoadingProgress();
-      
-      try {
-        showNotification('Data refresh initiated', 'success');
-        await loadDashboardData();
-        refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh Data';
-        enableAllButtons();
-      } catch (error) {
-        refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh Data';
-        enableAllButtons();
-        showNotification('Error refreshing data', 'error');
-      }
+      // Clear cache and reload dashboard data
+      clearPageCache();
+      await loadDashboardData();
+    } else {
+      showNotification('Refresh failed: ' + data.message, 'error');
     }
+  } catch (error) {
+    showNotification('Error refreshing data: ' + error.message, 'error');
+  } finally {
+    refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh Data';
+    enableAllButtons();
+  }
+}
 
     async function confirmForceCleanup() {
-      const pin = cleanupPinInput.value.trim();
-      if (!pin) {
-        showNotification('Please enter PIN', 'error');
-        return;
-      }
+  const pin = cleanupPinInput.value.trim();
+  if (!pin) {
+    showNotification('Please enter PIN', 'error');
+    return;
+  }
+  
+  if (pin !== AUTH_PIN) {
+    showNotification('Invalid PIN', 'error');
+    return;
+  }
+  
+  hideCleanupModal();
+  disableAllButtons();
+  forceCleanupBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Cleaning...';
+  showLoader();
+  showLoadingProgress();
+  
+  try {
+    // Call the Supabase function for force cleanup
+    const { data, error } = await supabase.rpc('force_cleanup');
+    
+    if (error) throw error;
+    
+    if (data.success) {
+      showNotification(data.message, 'warning');
       
-      if (pin !== AUTH_PIN) {
-        showNotification('Invalid PIN', 'error');
-        return;
-      }
-      
-      hideCleanupModal();
-      disableAllButtons();
-      forceCleanupBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Cleaning...';
-      showLoader();
-      showLoadingProgress();
-      
-      try {
-        showNotification('Cleanup completed', 'warning');
-        await loadDashboardData();
-        forceCleanupBtn.innerHTML = '<i class="fas fa-broom"></i> Force Cleanup';
-        enableAllButtons();
-      } catch (error) {
-        forceCleanupBtn.innerHTML = '<i class="fas fa-broom"></i> Force Cleanup';
-        enableAllButtons();
-        showNotification('Error during cleanup', 'error');
-      }
+      // Clear cache and reload dashboard data
+      clearPageCache();
+      await loadDashboardData();
+    } else {
+      showNotification('Cleanup failed: ' + data.message, 'error');
     }
+  } catch (error) {
+    showNotification('Error during cleanup: ' + error.message, 'error');
+  } finally {
+    forceCleanupBtn.innerHTML = '<i class="fas fa-broom"></i> Force Cleanup';
+    enableAllButtons();
+  }
+}
+
+// Updated cache clearing function
+function clearPageCache() {
+  // Since we're not using browser cache for Supabase data, 
+  // we'll clear any local storage or force reload data
+  sessionStorage.removeItem('currentPage');
+  sessionStorage.removeItem('currentView');
+  
+  // Force reload current data
+  if (selectedPage) {
+    loadDashboardData();
+  }
+}
 
     function disableAllButtons() {
       changePageBtn.disabled = true;
@@ -4105,7 +4169,6 @@
 
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', detectTheme);
     detectTheme();
-    
   </script>
 </body>
 </html>
