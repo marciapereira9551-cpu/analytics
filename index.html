@@ -2700,7 +2700,16 @@ async function getPageDailyDeposits(pageName, monthOffset = 0) {
     
     // Only generate dates up to today for current month, or full month for past months
     const isCurrentMonth = currentMonth === formatDateForGrouping(nowPKT).substring(0, 7);
-    const actualEndDate = isCurrentMonth ? today : getStartOfDayPKT(currentMonthEnd);
+    
+    // FIXED: Use the actual end date properly
+    let actualEndDate;
+    if (isCurrentMonth) {
+      actualEndDate = today;
+    } else {
+      // For past months, use the last day of that month
+      actualEndDate = new Date(currentMonthEnd);
+      actualEndDate.setUTCHours(0, 0, 0, 0);
+    }
     
     // Create a map of all days in the month with deposits
     const dailyDataMap = {};
@@ -2713,8 +2722,15 @@ async function getPageDailyDeposits(pageName, monthOffset = 0) {
     let currentDate = new Date(currentMonthStart);
     currentDate.setUTCHours(0, 0, 0, 0);
     
-    // Generate all days for the current month up to actual end date (INCLUDING 31st day when applicable)
-    while (currentDate <= actualEndDate) {
+    // DEBUG: Log the date range we're generating
+    console.log(`Generating days for ${currentMonth}:`);
+    console.log(`Start: ${currentDate.toISOString()}`);
+    console.log(`End: ${actualEndDate.toISOString()}`);
+    
+    // FIXED: Use date comparison by timestamp to avoid timezone issues
+    const endTimestamp = actualEndDate.getTime();
+    
+    while (currentDate.getTime() <= endTimestamp) {
       const dateKey = formatDateForGrouping(currentDate);
       const displayDate = convertUTCToPKTDateOnly(currentDate.toISOString());
       
@@ -2733,10 +2749,13 @@ async function getPageDailyDeposits(pageName, monthOffset = 0) {
         });
       }
       
+      // Move to next day
       currentDate.setDate(currentDate.getDate() + 1);
+      currentDate.setUTCHours(0, 0, 0, 0); // Reset time to start of day
     }
     
-    console.log(`Generated ${dailyDepositsArray.length} days for ${currentMonth} (from ${formatDateForGrouping(new Date(currentMonthStart))} to ${formatDateForGrouping(actualEndDate)})`);
+    console.log(`Generated ${dailyDepositsArray.length} days for ${currentMonth}`);
+    console.log(`Available dates:`, dailyDepositsArray.map(d => d.displayDate));
     
     // Sort by date descending (newest first)
     dailyDepositsArray.sort((a, b) => b.timestamp - a.timestamp);
