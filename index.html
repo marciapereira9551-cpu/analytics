@@ -2709,13 +2709,23 @@ async function getPageDailyDeposits(pageName, monthOffset = 0) {
       dailyDataMap[day.date] = day;
     });
     
-    // FIXED: Generate complete date range for the actual month (not just 30 days)
+    // FIXED: Generate complete date range for the actual month - HARDCODED PROPER LOGIC
     const dailyDepositsArray = [];
-    const currentDate = new Date(currentMonthStart);
-    currentDate.setUTCHours(0, 0, 0, 0);
     
-    // Generate all days for the current month up to actual end date
-    while (currentDate <= actualEndDate && currentDate.getMonth() === currentMonthStart.getMonth()) {
+    // Get the actual number of days in the month
+    const year = currentMonthStart.getFullYear();
+    const month = currentMonthStart.getMonth();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    
+    console.log(`Generating ${daysInMonth} days for ${currentMonth}`); // Debug log
+    
+    // Generate all days for the current month
+    for (let day = 1; day <= daysInMonth; day++) {
+      const currentDate = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
+      
+      // Stop if we've reached today for current month
+      if (currentDate > actualEndDate) break;
+      
       const dateKey = formatDateForGrouping(currentDate);
       const displayDate = convertUTCToPKTDateOnly(currentDate.toISOString());
       
@@ -2733,8 +2743,6 @@ async function getPageDailyDeposits(pageName, monthOffset = 0) {
           timestamp: currentDate.getTime()
         });
       }
-      
-      currentDate.setDate(currentDate.getDate() + 1);
     }
     
     // Sort by date descending (newest first)
